@@ -1,0 +1,12 @@
+# C++ build artifacts
+*.o
+l4s_router
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+
+# Experiment logs and OS files
+*.log
+*.csv
+.DS_Store
