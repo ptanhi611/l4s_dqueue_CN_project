@@ -1,12 +1,32 @@
-# C++ build artifacts
+# C++ Build Artifacts & Binaries
+bin/
+build/
 *.o
+*.so
+*.a
 l4s_router
 
-# Python cache & artifacts
+# Python Artifacts & Caches
 __pycache__/
 *.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+venv/
+.venv/
+env/
 
-# Experiment logs and OS files
+# Experiment Outputs, Telemetry & Logs
+eval/results/*.csv
+eval/results/*.png
+eval/results/*.pcap
 *.log
 *.csv
+*.pcap
+
+# Editor & OS Metadata
+.vscode/
+.idea/
+*.swp
+*.swo
 .DS_Store
