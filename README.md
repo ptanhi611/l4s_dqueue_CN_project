@@ -1,6 +1,6 @@
 # Mitigating Bufferbloat via Emulated L4S Dual-Queue Coupled AQM
 
-An emulated software-defined edge forwarder implementing IETF RFC 9331 and RFC 9332 (DualQ Coupled Active Queue Management) to eliminate bufferbloat and guarantee sub-5 ms latency for interactive flows under link saturation[cite: 1, 7].
+An emulated software-defined edge forwarder implementing IETF RFC 9331 and RFC 9332 (DualQ Coupled Active Queue Management) to eliminate bufferbloat and guarantee sub-5 ms latency for interactive flows under link saturation.
 
 ---
 
@@ -57,7 +57,7 @@ This project implements a userspace Layer-3 software router running **Dual-Queue
 
 ## 3. Repository Structure
 
-The repository is organized into distinct modules across development, configuration, network emulation, and automated benchmarking[cite: 8]:
+The repository is organized into distinct modules across development, configuration, network emulation, and automated benchmarking:
 
 ```text
 l4s-dualq-router/
@@ -135,7 +135,7 @@ make
 This produces the compiled binary at `build/l4s_router`.
 
 ### Step 2: Launch the Bottleneck Topology
-Launch Mininet with custom routing and disabled kernel IP forwarding[cite: 7]:
+Launch Mininet with custom routing and disabled kernel IP forwarding:
 ```bash
 sudo -E python3 mininet/topo_bottleneck.py
 ```
@@ -143,15 +143,22 @@ sudo -E python3 mininet/topo_bottleneck.py
 ### Step 3: Start the Forwarder on Node r0
 Inside the Mininet interactive CLI (`mininet>`):
 ```bash
-mininet> r0 ./build/l4s_router config/router_config.ini &
+# mode = dualq (our L4S router) or fifo (single queue baseline)
+mininet> r0 ./build/l4s_router config/router_config.ini dualq > eval/results/router_log.txt 2>&1 &
+mininet> h1 ping -c 5 10.0.2.1          # sanity check: should work, RTT ~20 ms
 ```
+Stop the router with `mininet> r0 pkill -INT l4s_router` (it prints a summary into `router_log.txt`).
+Per-100 ms queue/AQM stats are written to `eval/results/router_stats.csv`.
 
 ### Step 4: Run the Automated Evaluation Suite
 You can execute tests directly from the Mininet CLI:
 ```bash
-mininet> h2 iperf3 -s &
-mininet> h1 python3 eval/latency_probe.py --dest 10.0.2.1 --interval 0.01 &
-mininet> h1 iperf3 -c 10.0.2.1 -t 30
+mininet> h2 iperf3 -s -p 5201 &                      # Classic (cubic) receiver
+mininet> h2 iperf3 -s -p 5202 &                      # L4S (DCTCP + ECT(1)) receiver
+mininet> h2 python3 eval/latency_probe.py --server &
+mininet> h1 iperf3 -c 10.0.2.1 -p 5201 -t 40 &       # Classic bulk flow
+mininet> h1 iperf3 -c 10.0.2.1 -p 5202 -C dctcp -t 40 &   # L4S bulk flow
+mininet> h1 python3 eval/latency_probe.py --dest 10.0.2.1 --ecn 1 --duration 30 --out eval/results/probe_l4s.csv
 ```
 Or run the automated orchestrator from an external terminal:
 ```bash
@@ -171,9 +178,9 @@ Output graphs are saved to `eval/results/`.
 
 | Member | Primary Ownership | Assigned Source Files | Checkpoint Deliverables |
 | :--- | :--- | :--- | :--- |
-| **Vasant** | Controller Math & Starvation-Free Scheduler | `include/pi2_aqm.hpp`, `src/pi2_aqm.cpp`, `include/scheduler.hpp`, `src/scheduler.cpp` | System block diagrams, queue state-machine flowcharts, RFC 9332 PI tuning constants[cite: 4] |
-| **Asit** | Emulation Topology & Evaluation Harness | `mininet/topo_bottleneck.py`, `mininet/configure_routes.sh`, `eval/traffic_profile.sh`, `eval/latency_probe.py` | Mininet dual-subnet setup, synthetic traffic matrix, automated latency CSV logging[cite: 4, 7] |
-| **Rishit** | Wire Capture Engine & Packet Classifier | `include/raw_socket.hpp`, `src/raw_socket.cpp`, `include/classifier.hpp`, `src/classifier.cpp`, `src/main.cpp` | AF_PACKET raw socket binding, IPv4 ToS/ECN classification logic, checksum recalculation[cite: 4] |
+| **Vasant** | Controller Math & Starvation-Free Scheduler | `include/pi2_aqm.hpp`, `src/pi2_aqm.cpp`, `include/scheduler.hpp`, `src/scheduler.cpp` | System block diagrams, queue state-machine flowcharts, RFC 9332 PI tuning constants |
+| **Asit** | Emulation Topology & Evaluation Harness | `mininet/topo_bottleneck.py`, `mininet/configure_routes.sh`, `eval/traffic_profile.sh`, `eval/latency_probe.py` | Mininet dual-subnet setup, synthetic traffic matrix, automated latency CSV logging |
+| **Rishit** | Wire Capture Engine & Packet Classifier | `include/raw_socket.hpp`, `src/raw_socket.cpp`, `include/classifier.hpp`, `src/classifier.cpp`, `src/main.cpp` | AF_PACKET raw socket binding, IPv4 ToS/ECN classification logic, checksum recalculation |
 
 ---
 
@@ -181,10 +188,10 @@ Output graphs are saved to `eval/results/`.
 
 ```text
 Week 1–2: Checkpoint Sprint (Current)
-├── Configure Mininet dual-subnet bottleneck (50 Mbps, 20 ms delay)[cite: 7]
+├── Configure Mininet dual-subnet bottleneck (50 Mbps, 20 ms delay)
 ├── Verify baseline bufferbloat (DropTail RTT spikes > 150 ms)
 ├── Implement raw socket ECN classifier proof-of-concept
-└── Checkpoint 1 Presentation: Deliver block diagram, flowchart, and working packet parser[cite: 4]
+└── Checkpoint 1 Presentation: Deliver block diagram, flowchart, and working packet parser
 
 Week 3–4: Core Forwarding & Ring Buffer Engine
 ├── Implement thread-safe dual ring buffers (Classic deep queue vs. L4S shallow queue)
@@ -199,9 +206,9 @@ Week 5–6: RFC 9332 Coupled PI2 Controller & Scheduler
 
 Week 7–8: Benchmarking, Validation & Final Evaluation
 ├── Run automated traffic matrices across varying loads (10 Mbps to 100 Mbps)
-├── Benchmark against Linux kernel DropTail and FQ-CoDel baselines[cite: 1]
+├── Benchmark against Linux kernel DropTail and FQ-CoDel baselines
 ├── Generate P50, P95, and P99 latency CDFs and throughput graphs
-└── Final Project Evaluation & Live Demonstration[cite: 4]
+└── Final Project Evaluation & Live Demonstration
 ```
 
 ---
