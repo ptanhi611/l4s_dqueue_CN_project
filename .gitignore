@@ -30,3 +30,4 @@ eval/results/*.pcap
 *.swp
 *.swo
 .DS_Store
+eval/results/
