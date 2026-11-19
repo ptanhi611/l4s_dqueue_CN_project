@@ -3,7 +3,7 @@
 //   h1 ---> r0-eth0 [ classify -> DualQueue -> PI2 AQM + scheduler -> 50 Mbps pacing ] r0-eth1 ---> h2
 //   h1 <--- r0-eth0 <------------------- forwarded straight away (ACKs) ------------- r0-eth1 <--- h2
 //
-// Usage:  sudo ./build/l4s_router config/router_config.ini [fifo|dualq]
+// Usage:  sudo ./build/l4s_router config/router_config.ini [fifo|dualq] [stats.csv]
 
 #include <arpa/inet.h>
 #include <poll.h>
@@ -95,7 +95,7 @@ struct Stats {
 int main(int argc, char* argv[]) {
 
     if (argc < 2) {
-        printf("Usage: %s <config.ini> [fifo|dualq]\n", argv[0]);
+        printf("Usage: %s <config.ini> [fifo|dualq] [stats.csv]\n", argv[0]);
         return 1;
     }
 
@@ -125,6 +125,7 @@ int main(int argc, char* argv[]) {
     double rate_bps = get_num(cfg, "rate_mbps", 50.0) * 1e6;
     uint32_t limit_bytes = (uint32_t)get_num(cfg, "queue_limit_bytes", 1500000);
     std::string stats_path = get_str(cfg, "stats_file", "eval/results/router_stats.csv");
+    if (argc >= 4) stats_path = argv[3];  // command line overrides config
     double stats_interval_ms = get_num(cfg, "stats_interval_ms", 100.0);
 
     AQMConfig aqm_cfg;
