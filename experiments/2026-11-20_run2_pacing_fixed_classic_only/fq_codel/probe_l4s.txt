@@ -1,0 +1,3 @@
+sent 3001, received 3001, lost 0
+RTT ms: p50 20.20 | p95 20.37 | p99 20.46 | max 20.56
+saved eval/results/fq_codel/probe_l4s.csv

@@ -1,0 +1,5 @@
+# Output of sim_attack.cpp (offline, real-time, no Mininet), 6 s per mode, first 2 s skipped
+# Built with: g++ -std=c++17 -O2 -Iinclude experiments/2026-11-20_sim1_offline_attack_logic/sim_attack.cpp src/classifier.cpp src/dual_queue.cpp src/pi2_aqm.cpp src/scheduler.cpp src/queue_protection.cpp -o sim_attack
+dualq_basic  probe delay  259.45 ms | L queue  259.26 ms | C queue   0.01 ms | tput flood  46.1 classic   3.6 Mbps | p_C 0.000 | L drops 0 C drops 0 redirects 0
+dualq        probe delay   15.45 ms | L queue   14.84 ms | C queue   0.01 ms | tput flood  42.8 classic   7.1 Mbps | p_C 0.303 | L drops 9054 C drops 1427 redirects 0
+dualq_qp     probe delay    0.24 ms | L queue    0.21 ms | C queue  15.99 ms | tput flood  42.6 classic   7.2 Mbps | p_C 0.283 | L drops 708 C drops 9860 redirects 29640

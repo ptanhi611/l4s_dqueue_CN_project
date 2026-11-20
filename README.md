@@ -150,27 +150,36 @@ mininet> h1 ping -c 5 10.0.2.1          # sanity check: should work, RTT ~20 ms
 Stop the router with `mininet> r0 pkill -INT l4s_router` (it prints a summary into `router_log.txt`).
 Per-100 ms queue/AQM stats are written to `eval/results/router_stats.csv`.
 
-### Step 4: Run the Automated Evaluation Suite
-You can execute tests directly from the Mininet CLI:
+### Step 4: Run the Automated Experiments (recommended)
+One command runs the same experiment in several modes, prints the summary tables,
+draws the graphs, and archives everything in `experiments/<date_time>_<label>/`:
 ```bash
-mininet> h2 iperf3 -s -p 5201 &                      # Classic (cubic) receiver
-mininet> h2 iperf3 -s -p 5202 &                      # L4S (DCTCP + ECT(1)) receiver
-mininet> h2 python3 eval/latency_probe.py --server &
-mininet> h1 iperf3 -c 10.0.2.1 -p 5201 -t 40 &       # Classic bulk flow
-mininet> h1 iperf3 -c 10.0.2.1 -p 5202 -C dctcp -t 40 &   # L4S bulk flow
-mininet> h1 python3 eval/latency_probe.py --dest 10.0.2.1 --ecn 1 --duration 30 --out eval/results/probe_l4s.csv
-```
-Or run the automated orchestrator from an external terminal:
-```bash
-sudo ./eval/traffic_profile.sh
-```
+sudo ./eval/traffic_profile.sh <label> [normal|attack] [duration_s] ["mode list"]
 
-### Step 5: Generate Metrics & Visualizations
-```bash
-python3 eval/parse_metrics.py --input eval/results/
-python3 eval/plot_results.py --input eval/results/
+sudo ./eval/traffic_profile.sh normal_check                    # fifo dualq dualq_qp fq_codel dualpi2
+sudo ./eval/traffic_profile.sh attack_check attack 40          # dualq_basic dualq dualq_qp fq_codel dualpi2
 ```
-Output graphs are saved to `eval/results/`.
+| Mode | What it is |
+|---|---|
+| `fifo` | our router, one plain queue (bufferbloat baseline) |
+| `dualq_basic` | our router, DualQ + coupled PI2, no overload handling |
+| `dualq` | our router, DualQ + coupled PI2 + RFC 9332 overload handling |
+| `dualq_qp` | `dualq` + our queue protection for the L4S queue |
+| `fq_codel` | Linux kernel fq_codel (baseline) |
+| `dualpi2` | Linux kernel `sch_dualpi2` (reference RFC 9332 implementation, kernel 6.17+) |
+
+Scenarios: `normal` = 1 Classic (cubic) flow + 1 L4S (DCTCP, ECT(1)) flow + 2 latency probes.
+`attack` = normal + a 60 Mbps ECT(1) UDP flood that ignores CE marks (from t=10 s until 10 s before the end).
+
+### Step 5: Results, Graphs and the Experiment Log
+Each run's folder in `experiments/` contains the console output, all raw CSV/JSON files,
+`summary.csv`, and the graphs (`latency_cdf.png`, `latency_timeseries.png`, `throughput.png`,
+`internals_<mode>.png`). Graphs can be re-drawn from any archived run:
+```bash
+python3 eval/plot_results.py --input experiments/<run_folder>
+python3 eval/parse_metrics.py --input experiments/<run_folder>
+```
+**After every run, add an entry to `experiments/LOG.md`** (what changed, what we saw, valid or not).
 
 ---
 
@@ -237,4 +246,8 @@ To maintain a clean Git history and avoid branch conflicts:
 * **RFC 9330:** *Low Latency, Low Loss, and Scalable Throughput (L4S) Internet Architecture* (IETF, 2023).
 * **RFC 9331:** *The Explicit Congestion Notification (ECN) Protocol for L4S* (IETF, 2023).
 * **RFC 9332:** *Dual-Queue Coupled Active Queue Management (AQM) for Low Latency, Low Loss, and Scalable Throughput (L4S)* (IETF, 2023).
-* **De Schepper, K., et al.:** *"PI2: A Linearized AQM for both Classic and Scalable TCP,"* ACM CoNEXT, 2016.
+* **De Schepper, K., et al.:** *"PI2: A Linearized AQM for both Classic and Scalable TCP,"* ACM CoNEXT, 2016.* **RFC 8257:** *Data Center TCP (DCTCP): TCP Congestion Control for Data Centers* (IETF, 2017). Used as our scalable (L4S) sender.
+* **RFC 8290:** *The Flow Queue CoDel Packet Scheduler and Active Queue Management Algorithm* (IETF, 2018). The `fq_codel` baseline.
+* **Linux `sch_dualpi2`** (net/sched/sch_dualpi2.c, mainline since Linux 6.17). Reference DualPI2 implementation, used as our benchmark.
+* **L4STeam, TCP Prague and L4S kernel patches:** https://github.com/L4STeam/linux
+* **Briscoe, B. and White, G.:** *The DOCSIS Queue Protection Algorithm to Preserve Low Latency* (IETF Internet-Draft, draft-briscoe-docsis-q-protection). Inspiration for our L4S queue protection.

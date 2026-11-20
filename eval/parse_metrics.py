@@ -11,7 +11,8 @@ import json
 import os
 import re
 
-MODES = ['fifo', 'dualq', 'fq_codel', 'dualpi2']
+MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'fq_codel', 'dualpi2']
+OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp']
 
 
 def percentile(sorted_values, p):
@@ -74,7 +75,7 @@ def read_queue_delays(folder, mode):
     #   our router:      router_stats.csv (written by l4s_router)
     #   kernel dualpi2:  tc_samples.txt   (lines like "prob 0.01 delay_c 12ms delay_l 800us")
     l4s, classic = [], []
-    if mode in ('fifo', 'dualq'):
+    if mode in OUR_MODES:
         path = os.path.join(folder, 'router_stats.csv')
         if os.path.exists(path):
             with open(path) as f:
@@ -114,6 +115,67 @@ def ecn_check(folder):
     return 'NO'
 
 
+def read_run_info(folder):
+    # run_info.txt has lines like "scenario=attack" and "attack_start=10"
+    info = {}
+    path = os.path.join(folder, 'run_info.txt')
+    if os.path.exists(path):
+        for line in open(path):
+            if '=' in line:
+                key, value = line.strip().split('=', 1)
+                info[key] = value
+    return info
+
+
+def iperf_mean_in_window(path, start, end, offset=0.0):
+    # Average throughput (Mbps) of the 1-second iperf3 intervals inside [start, end].
+    # offset: time when this iperf3 test started (the flood starts at attack_start).
+    values = []
+    if not os.path.exists(path):
+        return float('nan')
+    try:
+        data = json.load(open(path))
+        for interval in data['intervals']:
+            t0 = interval['sum']['start'] + offset
+            t1 = interval['sum']['end'] + offset
+            if t0 >= start and t1 <= end:
+                values.append(interval['sum']['bits_per_second'] / 1e6)
+    except (ValueError, KeyError):
+        return float('nan')
+    return mean(values)
+
+
+def probe_in_window(folder, name, start, end, interval=0.01):
+    # p50 and p99 RTT of the probes sent inside [start, end] (probe seq * 10 ms = send time)
+    rtts = []
+    path = os.path.join(folder, 'probe_%s.csv' % name)
+    if os.path.exists(path):
+        with open(path) as f:
+            for row in csv.DictReader(f):
+                t = int(row['seq']) * interval
+                if start <= t <= end:
+                    rtts.append(float(row['rtt_ms']))
+    rtts.sort()
+    return percentile(rtts, 50), percentile(rtts, 99)
+
+
+def attack_metrics(folder):
+    # Numbers measured only DURING the attack (None if this was not an attack run)
+    info = read_run_info(folder)
+    if info.get('scenario') != 'attack':
+        return None
+    start, end = float(info['attack_start']), float(info['attack_end'])
+    # Skip the first 2 s of the attack, so we measure the steady state
+    w0, w1 = start + 2, end
+    return {
+        'l4s_probe': probe_in_window(folder, 'l4s', w0, w1),
+        'classic_probe': probe_in_window(folder, 'classic', w0, w1),
+        'classic_tput': iperf_mean_in_window(os.path.join(folder, 'iperf_classic.json'), w0, w1),
+        'l4s_tput': iperf_mean_in_window(os.path.join(folder, 'iperf_l4s.json'), w0, w1),
+        'flood_tput': iperf_mean_in_window(os.path.join(folder, 'iperf_flood.json'), w0, w1, offset=start),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', default='eval/results')
@@ -124,8 +186,11 @@ def main():
                'classic_p50_ms', 'classic_p95_ms', 'classic_p99_ms', 'classic_loss_pct',
                'classic_tput_mbps', 'l4s_tput_mbps', 'total_tput_mbps',
                'l4s_qdelay_mean_ms', 'l4s_qdelay_p99_ms', 'classic_qdelay_mean_ms', 'classic_qdelay_p99_ms',
-               'l4s_ecn_ok']
+               'l4s_ecn_ok',
+               'atk_l4s_p50_ms', 'atk_l4s_p99_ms', 'atk_classic_p50_ms', 'atk_classic_p99_ms',
+               'atk_classic_tput_mbps', 'atk_l4s_tput_mbps', 'atk_flood_tput_mbps']
     rows = []
+    attacks = {}
 
     for mode in MODES:
         folder = os.path.join(args.input, mode)
@@ -139,6 +204,7 @@ def main():
         qdelay = [mean(l_q), percentile(sorted(l_q), 99), mean(c_q), percentile(sorted(c_q), 99)]
         rows.append([mode] + list(l4s) + list(classic) + [c_tput, l_tput, c_tput + l_tput] + qdelay
                     + [ecn_check(folder)])
+        attacks[mode] = attack_metrics(folder)
 
     if not rows:
         print('No result folders found in', args.input)
@@ -146,24 +212,38 @@ def main():
 
     # Print a readable table
     print('Probe RTT in ms (base RTT is ~20 ms). Throughput in Mbps (link is 50 Mbps).\n')
-    print('%-9s | %-26s | %-26s | %-22s' % ('', 'L4S probe  p50/p95/p99 loss', 'Classic probe p50/p95/p99 loss',
+    print('%-11s | %-26s | %-26s | %-22s' % ('', 'L4S probe  p50/p95/p99 loss', 'Classic probe p50/p95/p99 loss',
                                            'Throughput C / L / total'))
     for r in rows:
-        print('%-9s | %6.1f %6.1f %6.1f %4.1f%% | %6.1f %6.1f %6.1f %4.1f%% | %5.1f / %5.1f / %5.1f' %
+        print('%-11s | %6.1f %6.1f %6.1f %4.1f%% | %6.1f %6.1f %6.1f %4.1f%% | %5.1f / %5.1f / %5.1f' %
               (r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]))
 
     print('\nQueue delay inside the bottleneck in ms (sampled every 100 ms; fq_codel does not report it)')
-    print('%-9s | %-19s | %-19s | %s' % ('', 'L4S queue mean/p99', 'Classic mean/p99', 'L4S flow DCTCP+ECN?'))
+    print('%-11s | %-19s | %-19s | %s' % ('', 'L4S queue mean/p99', 'Classic mean/p99', 'L4S flow DCTCP+ECN?'))
     for r in rows:
-        print('%-9s | %8.2f %10.2f | %8.2f %10.2f | %s' % (r[0], r[12], r[13], r[14], r[15], r[16]))
+        print('%-11s | %8.2f %10.2f | %8.2f %10.2f | %s' % (r[0], r[12], r[13], r[14], r[15], r[16]))
     print('(fifo has one queue: it is shown in the Classic column)')
+
+    if any(attacks.values()):
+        print('\nDURING THE ATTACK (ECT(1) UDP flood, steady state from 2 s after it starts)')
+        print('%-11s | %-17s | %-17s | %s' % ('', 'L4S probe p50/p99', 'Classic p50/p99', 'Tput Classic / L4S / flood (Mbps)'))
+        for mode in [r[0] for r in rows]:
+            a = attacks[mode]
+            if a:
+                print('%-11s | %7.1f %8.1f | %7.1f %8.1f | %5.1f / %5.1f / %5.1f' % (
+                    mode, a['l4s_probe'][0], a['l4s_probe'][1], a['classic_probe'][0], a['classic_probe'][1],
+                    a['classic_tput'], a['l4s_tput'], a['flood_tput']))
 
     out_path = os.path.join(args.input, 'summary.csv')
     with open(out_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(columns)
         for r in rows:
-            writer.writerow([r[0]] + ['%.2f' % v for v in r[1:-1]] + [r[-1]])
+            a = attacks.get(r[0])
+            atk = []
+            if a:
+                atk = list(a['l4s_probe']) + list(a['classic_probe']) + [a['classic_tput'], a['l4s_tput'], a['flood_tput']]
+            writer.writerow([r[0]] + ['%.2f' % v for v in r[1:-1]] + [r[-1]] + ['%.2f' % v for v in atk])
     print('\nSaved', out_path)
 
 

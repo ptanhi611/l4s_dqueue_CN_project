@@ -2,7 +2,8 @@
 
 DualQueue::DualQueue(uint32_t limit_bytes) : limit_bytes_(limit_bytes) {}
 
-bool DualQueue::enqueue(const uint8_t* frame, int len, uint8_t ecn, bool to_l4s) {
+bool DualQueue::enqueue(const uint8_t* frame, int len, uint8_t ecn, bool to_l4s,
+                        uint64_t flow_id, bool sanctioned) {
 
     // Shared buffer is full: tail drop
     if (bytes_ + len > limit_bytes_) return false;
@@ -11,6 +12,8 @@ bool DualQueue::enqueue(const uint8_t* frame, int len, uint8_t ecn, bool to_l4s)
     p.data.assign(frame, frame + len);
     p.enqueue_time = Clock::now();
     p.ecn = ecn;
+    p.flow_id = flow_id;
+    p.sanctioned = sanctioned;
 
     if (to_l4s) l4s_q_.push_back(p);
     else classic_q_.push_back(p);

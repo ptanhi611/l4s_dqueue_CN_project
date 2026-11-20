@@ -1,0 +1,5 @@
+# Keep every experiment in git, for the report and the presentation.
+# (The root .gitignore ignores *.csv, *.png and *.log everywhere; this re-includes them here.)
+!*.csv
+!*.png
+!*.log

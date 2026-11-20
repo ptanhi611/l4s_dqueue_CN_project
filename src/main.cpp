@@ -3,7 +3,13 @@
 //   h1 ---> r0-eth0 [ classify -> DualQueue -> PI2 AQM + scheduler -> 50 Mbps pacing ] r0-eth1 ---> h2
 //   h1 <--- r0-eth0 <------------------- forwarded straight away (ACKs) ------------- r0-eth1 <--- h2
 //
-// Usage:  sudo ./build/l4s_router config/router_config.ini [fifo|dualq] [stats.csv]
+// Usage:  sudo ./build/l4s_router config/router_config.ini [mode] [stats.csv]
+//
+// Modes:
+//   fifo         one plain queue, no AQM (bufferbloat baseline)
+//   dualq_basic  DualQ + coupled PI2, without overload handling
+//   dualq        DualQ + coupled PI2 + RFC 9332 overload handling
+//   dualq_qp     dualq + our queue protection for the L4S queue
 
 #include <arpa/inet.h>
 #include <poll.h>
@@ -21,6 +27,7 @@
 #include "dual_queue.hpp"
 #include "pi2_aqm.hpp"
 #include "raw_socket.hpp"
+#include "queue_protection.hpp"
 #include "scheduler.hpp"
 
 static volatile sig_atomic_t running = 1;
@@ -91,12 +98,14 @@ struct Stats {
     uint64_t rev_pkts = 0;     // packets h2 -> h1 (ACKs)
     uint64_t send_errors = 0;
     uint64_t big_frames = 0;   // frames > 1514 bytes, means offloads are still ON
+    uint64_t l4s_drops = 0;    // L4S packets dropped because of overload
+    uint64_t qp_redirects = 0; // L4S packets moved to Classic by queue protection
 };
 
 int main(int argc, char* argv[]) {
 
     if (argc < 2) {
-        printf("Usage: %s <config.ini> [fifo|dualq] [stats.csv]\n", argv[0]);
+        printf("Usage: %s <config.ini> [fifo|dualq_basic|dualq|dualq_qp] [stats.csv]\n", argv[0]);
         return 1;
     }
 
@@ -105,11 +114,13 @@ int main(int argc, char* argv[]) {
     // ---------- read settings ----------
     std::string mode = get_str(cfg, "mode", "dualq");
     if (argc >= 3) mode = argv[2];  // command line overrides config
-    if (mode != "fifo" && mode != "dualq") {
-        printf("mode must be fifo or dualq\n");
+    if (mode != "fifo" && mode != "dualq_basic" && mode != "dualq" && mode != "dualq_qp") {
+        printf("mode must be fifo, dualq_basic, dualq or dualq_qp\n");
         return 1;
     }
-    bool use_aqm = (mode == "dualq");
+    bool use_aqm = (mode != "fifo");
+    bool use_overload = (mode == "dualq" || mode == "dualq_qp");
+    bool use_qp = (mode == "dualq_qp");
 
     std::string in_if = get_str(cfg, "in_if", "r0-eth0");
     std::string out_if = get_str(cfg, "out_if", "r0-eth1");
@@ -141,7 +152,17 @@ int main(int argc, char* argv[]) {
     sched_cfg.l_quantum_bytes = (uint32_t)get_num(cfg, "l_quantum_bytes", sched_cfg.l_quantum_bytes);
     sched_cfg.classic_max_wait_ms = get_num(cfg, "classic_max_wait_ms", sched_cfg.classic_max_wait_ms);
 
+    // Overload (RFC 9332): the coupled L4S probability p_CL = k*p' is saturated (>= 1),
+    // which is the same as p_C = p'^2 >= 1/k^2 (0.25 for k = 2)
+    double p_cmax = 1.0 / (aqm_cfg.k_factor * aqm_cfg.k_factor);
+
+    uint32_t qp_max_flow_bytes = (uint32_t)get_num(cfg, "qp_max_flow_bytes", 30000);
+    double qp_sanction_ms = get_num(cfg, "qp_sanction_ms", 1000);
+
     printf("Mode: %s | rate %.1f Mbps | buffer %u bytes\n", mode.c_str(), rate_bps / 1e6, limit_bytes);
+    if (use_overload) printf("Overload handling ON (p_Cmax = %.3f)\n", p_cmax);
+    if (use_qp) printf("Queue protection ON (max %u bytes per flow in L4S queue, sanction %.0f ms)\n",
+                       qp_max_flow_bytes, qp_sanction_ms);
 
     // ---------- open sockets ----------
     RawSocket sock_in, sock_out;
@@ -151,12 +172,13 @@ int main(int argc, char* argv[]) {
     DualQueue queue(limit_bytes);
     PI2AQM aqm(aqm_cfg);
     DualQScheduler scheduler(sched_cfg);
+    QueueProtection qp(qp_max_flow_bytes, qp_sanction_ms);
     Stats st;
 
     FILE* stats_file = fopen(stats_path.c_str(), "w");
     if (stats_file) {
         fprintf(stats_file, "time_s,c_pkts,l_pkts,c_delay_ms,l_delay_ms,p_prime,p_c,p_l,"
-                            "sent_pkts,sent_bytes,tail_drops,aqm_drops,c_marks,l_marks\n");
+                            "sent_pkts,sent_bytes,tail_drops,aqm_drops,c_marks,l_marks,l4s_drops,qp_redirects,overload\n");
     } else {
         printf("Warning: could not open %s, no stats will be written\n", stats_path.c_str());
     }
@@ -193,8 +215,21 @@ int main(int argc, char* argv[]) {
             set_macs(buf, sock_out.get_mac(), h2_mac);
 
             bool to_l4s = use_aqm && info.is_l4s;  // in fifo mode everything uses one queue
-            if (queue.enqueue(buf, n, info.ecn, to_l4s)) st.rx_pkts++;
-            else st.tail_drops++;
+
+            // Queue protection: a flow holding too much of the L4S queue goes to Classic
+            bool sanctioned = false;
+            if (to_l4s && use_qp && !qp.allow_l4s(info, n, Clock::now())) {
+                to_l4s = false;
+                sanctioned = true;
+                st.qp_redirects++;
+            }
+
+            if (queue.enqueue(buf, n, info.ecn, to_l4s, info.flow_id, sanctioned)) {
+                st.rx_pkts++;
+                if (to_l4s && use_qp) qp.add_bytes(info.flow_id, n);
+            } else {
+                st.tail_drops++;
+            }
         }
 
         // ---------- 2. h2 -> h1 direction: forward straight away ----------
@@ -211,7 +246,11 @@ int main(int argc, char* argv[]) {
 
         // ---------- 3. PI2 controller update every Tupdate ----------
         if (now >= next_update) {
-            if (use_aqm) aqm.update_control_loop(queue.classic_delay_ms(now));
+            // RFC 9332: the full version drives PI2 with the larger of the two queue delays,
+            // so the controller also reacts when the L4S queue builds up (overload)
+            double qdelay = queue.classic_delay_ms(now);
+            if (use_overload && queue.l4s_delay_ms(now) > qdelay) qdelay = queue.l4s_delay_ms(now);
+            if (use_aqm) aqm.update_control_loop(qdelay);
             next_update += update_step;
         }
 
@@ -225,11 +264,16 @@ int main(int argc, char* argv[]) {
             Packet p = (q == SelectedQueue::L4S) ? queue.pop_l4s() : queue.pop_classic();
             double sojourn_ms = ms_between(p.enqueue_time, now);
             bool drop = false;
+            bool overload = use_overload && aqm.read_p_c() >= p_cmax;
+
+            if (use_qp && q == SelectedQueue::L4S) qp.remove_bytes(p.flow_id, p.data.size());
 
             if (use_aqm && q == SelectedQueue::CLASSIC) {
                 if (aqm.should_drop_classic(sojourn_ms)) {
-                    // RFC 9332: drop Not-ECT packets, CE-mark ECN-capable ones
-                    if (p.ecn == ECN_NOT_ECT) {
+                    // RFC 9332: drop Not-ECT packets, CE-mark ECN-capable ones.
+                    // Drop instead of mark when overloaded (marks are not working),
+                    // and for packets moved here by queue protection (the flow ignores marks).
+                    if (p.ecn == ECN_NOT_ECT || overload || p.sanctioned) {
                         drop = true;
                         st.aqm_drops++;
                     } else {
@@ -238,7 +282,11 @@ int main(int argc, char* argv[]) {
                     }
                 }
             } else if (use_aqm && q == SelectedQueue::L4S) {
-                if (aqm.should_mark_l4s(sojourn_ms)) {
+                if (overload && aqm.should_drop_classic(sojourn_ms)) {
+                    // RFC 9332 overload: L4S packets are dropped with the Classic probability p_C
+                    drop = true;
+                    st.l4s_drops++;
+                } else if (aqm.should_mark_l4s(sojourn_ms)) {
                     set_ce_mark(p.data.data());
                     st.l_marks++;
                 }
@@ -268,14 +316,16 @@ int main(int argc, char* argv[]) {
         // ---------- 5. write one stats line every stats_interval_ms ----------
         if (now >= next_stats) {
             if (stats_file) {
-                fprintf(stats_file, "%.3f,%zu,%zu,%.3f,%.3f,%.5f,%.5f,%.5f,%lu,%lu,%lu,%lu,%lu,%lu\n",
+                fprintf(stats_file, "%.3f,%zu,%zu,%.3f,%.3f,%.5f,%.5f,%.5f,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%d\n",
                         ms_between(start, now) / 1000.0,
                         queue.classic_packets(), queue.l4s_packets(),
                         queue.classic_delay_ms(now), queue.l4s_delay_ms(now),
                         aqm.read_p_prime(), aqm.read_p_c(), aqm.read_p_cl(),
                         (unsigned long)st.sent_pkts, (unsigned long)st.sent_bytes,
                         (unsigned long)st.tail_drops, (unsigned long)st.aqm_drops,
-                        (unsigned long)st.c_marks, (unsigned long)st.l_marks);
+                        (unsigned long)st.c_marks, (unsigned long)st.l_marks,
+                        (unsigned long)st.l4s_drops, (unsigned long)st.qp_redirects,
+                        (use_overload && aqm.read_p_c() >= p_cmax) ? 1 : 0);
                 fflush(stats_file);
             }
             next_stats += stats_step;
@@ -309,6 +359,11 @@ int main(int argc, char* argv[]) {
     printf("tail drops %lu, AQM drops %lu, classic CE marks %lu, L4S CE marks %lu\n",
            (unsigned long)st.tail_drops, (unsigned long)st.aqm_drops,
            (unsigned long)st.c_marks, (unsigned long)st.l_marks);
+    if (use_overload) printf("L4S overload drops %lu\n", (unsigned long)st.l4s_drops);
+    if (use_qp) {
+        printf("queue protection moved %lu packets to Classic\n", (unsigned long)st.qp_redirects);
+        qp.print_summary();
+    }
     if (st.send_errors) printf("send errors: %lu\n", (unsigned long)st.send_errors);
     unsigned int kernel_drops = sock_in.get_kernel_drops();
     if (kernel_drops) printf("WARNING: kernel dropped %u frames before we could read them (router too slow?)\n", kernel_drops);

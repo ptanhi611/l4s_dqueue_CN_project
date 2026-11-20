@@ -1,0 +1,5 @@
+mode,l4s_p50_ms,l4s_p95_ms,l4s_p99_ms,l4s_loss_pct,classic_p50_ms,classic_p95_ms,classic_p99_ms,classic_loss_pct,classic_tput_mbps,l4s_tput_mbps,total_tput_mbps,l4s_qdelay_mean_ms,l4s_qdelay_p99_ms,classic_qdelay_mean_ms,classic_qdelay_p99_ms,l4s_ecn_ok
+fifo,194.65,256.12,259.88,0.00,194.53,255.94,259.85,0.07,18.91,28.59,47.49,nan,nan,135.67,239.75,NO
+dualq,20.18,20.29,20.34,0.00,34.12,40.35,41.70,0.00,24.79,22.69,47.48,0.00,0.00,10.56,20.85,NO
+fq_codel,20.20,20.37,20.46,0.00,20.18,20.35,20.44,0.00,24.45,22.32,46.77,nan,nan,nan,nan,NO
+dualpi2,20.18,20.32,20.43,0.00,34.20,40.01,42.69,0.03,24.89,22.59,47.48,0.00,0.00,11.89,22.04,NO

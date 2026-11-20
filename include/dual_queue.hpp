@@ -10,6 +10,8 @@ struct Packet {
     std::vector<uint8_t> data;       // full Ethernet frame
     Clock::time_point enqueue_time;  // for sojourn time (queue delay)
     uint8_t ecn = 0;
+    uint64_t flow_id = 0;
+    bool sanctioned = false;  // queue protection moved this L4S packet to the Classic queue
 };
 
 // Two FIFO queues (Classic and L4S) sharing one buffer limit in bytes,
@@ -19,7 +21,8 @@ public:
     explicit DualQueue(uint32_t limit_bytes);
 
     // Returns false if the buffer is full (packet tail dropped)
-    bool enqueue(const uint8_t* frame, int len, uint8_t ecn, bool to_l4s);
+    bool enqueue(const uint8_t* frame, int len, uint8_t ecn, bool to_l4s,
+                 uint64_t flow_id = 0, bool sanctioned = false);
 
     Packet pop_classic();
     Packet pop_l4s();

@@ -33,6 +33,19 @@ PacketInfo parse_packet(const uint8_t* frame, int len) {
 
     // RFC 9331: ECT(1) and CE go to the L4S queue, Not-ECT and ECT(0) go to Classic
     info.is_l4s = (info.ecn == ECN_ECT1 || info.ecn == ECN_CE);
+
+    // TCP and UDP both start with source port (2 bytes) and destination port (2 bytes)
+    int hlen = ip_header_len(ip);
+    if ((info.protocol == 6 || info.protocol == 17) && len >= ETH_HDR_LEN + hlen + 4) {
+        const uint8_t* l4 = ip + hlen;
+        info.src_port = (l4[0] << 8) | l4[1];
+        info.dst_port = (l4[2] << 8) | l4[3];
+    }
+
+    // Flow id: pack the 5-tuple into one 64-bit number
+    // (src ip and dst ip in the high bits, ports and protocol mixed into the low bits)
+    info.flow_id = ((uint64_t)info.src_ip << 32) ^ ((uint64_t)info.dst_ip)
+                 ^ ((uint64_t)info.src_port << 48) ^ ((uint64_t)info.dst_port << 16) ^ info.protocol;
     return info;
 }
 

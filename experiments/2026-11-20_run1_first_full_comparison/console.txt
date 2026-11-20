@@ -1,0 +1,402 @@
+(base) rishit@rishit-IdeaPad-Slim-5-14IMH9:~/Documents/sem_5/networks/project/l4s-dualq-router$ sudo ./eval/traffic_profile.sh
+make: Nothing to be done for 'all'.
+
+================ fifo ================
+*** Configuring hosts
+h1 h2 r0 
+*** Starting controller
+
+*** Starting 0 switches
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h1: ECT(1) rewrite for TCP port 5202 installed
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h2: netem delay 20 ms on h2-eth0
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+r0: kernel forwarding off, offloads off
+
+PING 10.0.2.1 (10.0.2.1) 56(84) bytes of data.
+64 bytes from 10.0.2.1: icmp_seq=1 ttl=63 time=40.3 ms
+64 bytes from 10.0.2.1: icmp_seq=2 ttl=63 time=20.2 ms
+64 bytes from 10.0.2.1: icmp_seq=3 ttl=63 time=20.3 ms
+
+--- 10.0.2.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2003ms
+rtt min/avg/max/mdev = 20.213/26.922/40.278/9.443 ms
+
+Running fifo for 30 s ...
+sent 3000, received 3000, lost 0
+RTT ms: p50 235.92 | p95 311.26 | p99 315.40 | max 317.42
+saved eval/results/fifo/probe_l4s.csv
+sent 3000, received 3000, lost 0
+RTT ms: p50 235.79 | p95 311.19 | p99 315.70 | max 317.36
+saved eval/results/fifo/probe_classic.csv
+
+Mode: fifo | rate 50.0 Mbps | buffer 1500000 bytes
+Opened r0-eth0 (ifindex 2, mac b6:b1:e1:03:a2:ab)
+Opened r0-eth1 (ifindex 3, mac da:bc:aa:a3:7b:4a)
+Router running, press Ctrl+C to stop
+
+----- fifo summary -----
+queued 108138, sent 108138 (155.4 MB), reverse 65091
+tail drops 983, AQM drops 0, classic CE marks 0, L4S CE marks 0
+
+Results saved in eval/results/fifo
+*** Stopping 0 controllers
+
+*** Stopping 2 links
+..
+*** Stopping 0 switches
+
+*** Stopping 3 hosts
+h1 h2 r0 
+*** Done
+
+================ dualq ================
+*** Configuring hosts
+h1 h2 r0 
+*** Starting controller
+
+*** Starting 0 switches
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h1: ECT(1) rewrite for TCP port 5202 installed
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h2: netem delay 20 ms on h2-eth0
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+r0: kernel forwarding off, offloads off
+
+PING 10.0.2.1 (10.0.2.1) 56(84) bytes of data.
+64 bytes from 10.0.2.1: icmp_seq=1 ttl=63 time=40.2 ms
+64 bytes from 10.0.2.1: icmp_seq=2 ttl=63 time=20.3 ms
+64 bytes from 10.0.2.1: icmp_seq=3 ttl=63 time=20.2 ms
+
+--- 10.0.2.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2002ms
+rtt min/avg/max/mdev = 20.185/26.895/40.167/9.384 ms
+
+Running dualq for 30 s ...
+sent 3000, received 3000, lost 0
+RTT ms: p50 224.11 | p95 394.68 | p99 395.66 | max 396.36
+saved eval/results/dualq/probe_l4s.csv
+sent 3000, received 2987, lost 13
+RTT ms: p50 34.68 | p95 44.99 | p99 70.15 | max 77.65
+saved eval/results/dualq/probe_classic.csv
+
+Mode: dualq | rate 50.0 Mbps | buffer 1500000 bytes
+Opened r0-eth0 (ifindex 2, mac ba:67:72:8c:d4:97)
+Opened r0-eth1 (ifindex 3, mac 02:8f:5c:66:23:4f)
+Router running, press Ctrl+C to stop
+
+----- dualq summary -----
+queued 107728, sent 107615 (154.7 MB), reverse 71043
+tail drops 976, AQM drops 113, classic CE marks 0, L4S CE marks 81633
+
+Results saved in eval/results/dualq
+*** Stopping 0 controllers
+
+*** Stopping 2 links
+..
+*** Stopping 0 switches
+
+*** Stopping 3 hosts
+h1 h2 r0 
+*** Done
+
+================ fq_codel ================
+*** Configuring hosts
+h1 h2 r0 
+*** Starting controller
+
+*** Starting 0 switches
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h1: ECT(1) rewrite for TCP port 5202 installed
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h2: netem delay 20 ms on h2-eth0
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+r0: kernel forwarding off, offloads off
+
+qdisc htb 1: root refcnt 19 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000
+qdisc fq_codel 20: parent 1:10 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+
+PING 10.0.2.1 (10.0.2.1) 56(84) bytes of data.
+64 bytes from 10.0.2.1: icmp_seq=1 ttl=63 time=40.1 ms
+64 bytes from 10.0.2.1: icmp_seq=2 ttl=63 time=20.1 ms
+64 bytes from 10.0.2.1: icmp_seq=3 ttl=63 time=20.1 ms
+
+--- 10.0.2.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2003ms
+rtt min/avg/max/mdev = 20.090/26.781/40.143/9.448 ms
+
+Running fq_codel for 30 s ...
+sent 3000, received 3000, lost 0
+RTT ms: p50 20.18 | p95 20.34 | p99 20.44 | max 20.88
+saved eval/results/fq_codel/probe_l4s.csv
+sent 3000, received 3000, lost 0
+RTT ms: p50 20.19 | p95 20.35 | p99 20.43 | max 20.90
+saved eval/results/fq_codel/probe_classic.csv
+
+qdisc htb 1: root refcnt 19 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000
+ Sent 197892140 bytes 136203 pkt (dropped 39, overlimits 136118 requeues 0) 
+ backlog 0b 0p requeues 0
+qdisc fq_codel 20: parent 1:10 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 197892140 bytes 136203 pkt (dropped 39, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 1514 drop_overlimit 0 new_flow_count 9886 ecn_mark 25161
+  new_flows_len 0 old_flows_len 1
+
+Results saved in eval/results/fq_codel
+*** Stopping 0 controllers
+
+*** Stopping 2 links
+..
+*** Stopping 0 switches
+
+*** Stopping 3 hosts
+h1 h2 r0 
+*** Done
+
+================ dualpi2 ================
+*** Configuring hosts
+h1 h2 r0 
+*** Starting controller
+
+*** Starting 0 switches
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h1: ECT(1) rewrite for TCP port 5202 installed
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h2: netem delay 20 ms on h2-eth0
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+r0: kernel forwarding off, offloads off
+
+qdisc htb 1: root refcnt 19 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000
+qdisc dualpi2 20: parent 1:10 limit 10000p memlimit 30280000B target 15ms tupdate 16ms alpha 0.156250 beta 3.195312 step_thresh 1ms min_qlen_step 0p coupling_factor 2 drop_on_overload drop_dequeue classic_protection 10% l4s_ect split_gso 
+
+PING 10.0.2.1 (10.0.2.1) 56(84) bytes of data.
+64 bytes from 10.0.2.1: icmp_seq=1 ttl=63 time=40.1 ms
+64 bytes from 10.0.2.1: icmp_seq=2 ttl=63 time=20.1 ms
+64 bytes from 10.0.2.1: icmp_seq=3 ttl=63 time=20.1 ms
+
+--- 10.0.2.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2002ms
+rtt min/avg/max/mdev = 20.071/26.767/40.118/9.440 ms
+
+Running dualpi2 for 30 s ...
+sent 3000, received 2980, lost 20
+RTT ms: p50 35.81 | p95 44.65 | p99 46.74 | max 112.71
+saved eval/results/dualpi2/probe_l4s.csv
+sent 3000, received 2527, lost 473
+RTT ms: p50 20.47 | p95 24.10 | p99 45.69 | max 170.14
+saved eval/results/dualpi2/probe_classic.csv
+
+qdisc htb 1: root refcnt 19 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000
+ Sent 187724593 bytes 129034 pkt (dropped 1755, overlimits 128923 requeues 0) 
+ backlog 0b 0p requeues 0
+qdisc dualpi2 20: parent 1:10 limit 10000p memlimit 30280000B target 15ms tupdate 16ms alpha 0.156250 beta 3.195312 step_thresh 1ms min_qlen_step 0p coupling_factor 2 drop_on_overload drop_dequeue classic_protection 10% l4s_ect split_gso 
+ Sent 187724593 bytes 129034 pkt (dropped 1755, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+prob 0.000000 delay_c 0us delay_l 0us
+pkts_in_c 5668 pkts_in_l 125121 maxq 670
+ecn_mark 224207 step_mark 124045
+credit -270 (L-queue)
+memory_used 0 (max 1583912) of memory limit 30280000
+
+
+Results saved in eval/results/dualpi2
+*** Stopping 0 controllers
+
+*** Stopping 2 links
+..
+*** Stopping 0 switches
+
+*** Stopping 3 hosts
+h1 h2 r0 
+*** Done
+
+Probe RTT in ms (base RTT is ~20 ms). Throughput in Mbps (link is 50 Mbps).
+
+          | L4S probe  p50/p95/p99 loss | Classic probe p50/p95/p99 loss | Throughput C / L / total
+fifo      |  235.9  311.3  315.4  0.0% |  235.8  311.2  315.7  0.0% |  15.3 /  23.4 /  38.7
+dualq     |  224.1  394.7  395.7  0.0% |   34.7   45.0   70.2  0.4% |   8.8 /  29.9 /  38.7
+fq_codel  |   20.2   20.3   20.4  0.0% |   20.2   20.4   20.4  0.0% |  23.5 /  24.0 /  47.5
+dualpi2   |   35.8   44.6   46.7  0.7% |   20.5   24.1   45.7 15.8% |   0.8 /  46.7 /  47.5
+
+Saved eval/results/summary.csv
+Saved eval/results/latency_cdf.png
+Saved eval/results/throughput.png
+Saved eval/results/dualq_internals.png
+(base) rishit@rishit-IdeaPad-Slim-5-14IMH9:~/Documents/sem_5/networks/project/l4s-dualq-router$ 

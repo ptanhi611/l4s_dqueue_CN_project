@@ -7,8 +7,11 @@
 # so the queue builds in OUR queues and not in a kernel qdisc.
 #
 # Interactive:  sudo python3 mininet/topo_bottleneck.py
-# Automatic:    sudo python3 mininet/topo_bottleneck.py --run dualq --duration 30
-#               modes: fifo, dualq (our router) | fq_codel, dualpi2 (Linux kernel baselines)
+# Automatic:    sudo python3 mininet/topo_bottleneck.py --run dualq --scenario normal --duration 30
+#   modes:      fifo, dualq_basic, dualq, dualq_qp (our router) | fq_codel, dualpi2 (Linux kernel)
+#   scenarios:  normal = 1 Classic flow + 1 L4S flow + 2 latency probes
+#               attack = normal + an ECT(1) UDP flood (60 Mbps) that ignores marks,
+#                        from t=10 s until 10 s before the end
 
 import argparse
 import os
@@ -19,9 +22,29 @@ from mininet.cli import CLI
 from mininet.log import setLogLevel
 
 RATE_MBIT = 50  # must match rate_mbps in config/router_config.ini
+OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp']
+KERNEL_MODES = ['fq_codel', 'dualpi2']
+ATTACK_START = 10    # seconds after the flows start
+FLOOD_RATE = '60M'   # more than the 50 Mbps link
+
+
+def allow_dctcp():
+    # Mininet hosts are separate network namespaces. Inside a namespace, Linux only
+    # lets you choose a default congestion control from the "allowed" list, and that
+    # list can only be changed from the main namespace. So we add dctcp here, before
+    # the hosts exist. (This setting stays until reboot; it is harmless.)
+    os.system('modprobe tcp_dctcp')
+    path = '/proc/sys/net/ipv4/tcp_allowed_congestion_control'
+    allowed = open(path).read().split()
+    if 'dctcp' not in allowed:
+        allowed.append('dctcp')
+        with open(path, 'w') as f:
+            f.write(' '.join(allowed))
+    print('Allowed congestion controls:', open(path).read().strip())
 
 
 def build_network():
+    allow_dctcp()
     net = Mininet(controller=None, autoSetMacs=False)
 
     h1 = net.addHost('h1', ip='10.0.1.1/24', mac='00:00:00:00:01:01', defaultRoute='via 10.0.1.254')
@@ -72,13 +95,15 @@ def check_ecn(h1, out):
         print('WARNING: could not find a DCTCP+ECN connection. See %s/ss_check.txt' % out)
 
 
-def run_experiment(net, mode, duration):
+def run_experiment(net, mode, scenario, duration):
     h1, h2, r0 = net.get('h1', 'h2', 'r0')
     out = 'eval/results/' + mode
     os.makedirs(out, exist_ok=True)
+    attack_len = max(5, duration - ATTACK_START - 10)
 
     # 1. Start the forwarding path
-    if mode in ('fifo', 'dualq'):
+    path_start = time.time()
+    if mode in OUR_MODES:
         r0.cmd('./build/l4s_router config/router_config.ini %s %s/router_stats.csv > %s/router_log.txt 2>&1 &'
                % (mode, out, out))
     else:
@@ -98,10 +123,22 @@ def run_experiment(net, mode, duration):
     h2.cmd('iperf3 -s -p 5201 -D')   # Classic receiver
     h2.cmd('iperf3 -s -p 5202 -D')   # L4S receiver
     h2.cmd('python3 eval/latency_probe.py --server > /dev/null 2>&1 &')
+    if scenario == 'attack':
+        # One-shot server (-1) that logs what it RECEIVES, once per second
+        h2.cmd('iperf3 -s -p 5203 -1 -i 1 -J > %s/iperf_flood.json 2>&1 &' % out)
     time.sleep(1)
 
+    # Write down the settings of this run (used by the plots and kept for the report)
+    with open(out + '/run_info.txt', 'w') as f:
+        f.write('mode=%s\nscenario=%s\nduration=%d\n' % (mode, scenario, duration))
+        # seconds between router start and flow start (to line up router_stats.csv with the flows)
+        f.write('flows_start=%.2f\n' % (time.time() - path_start))
+        if scenario == 'attack':
+            f.write('attack_start=%d\nattack_end=%d\nflood_rate=%s\n'
+                    % (ATTACK_START, ATTACK_START + attack_len, FLOOD_RATE))
+
     # 4. Traffic from h1: one Classic bulk flow, one L4S bulk flow, two latency probes
-    print('Running %s for %d s ...' % (mode, duration))
+    print('Running %s (%s scenario) for %d s ...' % (mode, scenario, duration))
     h1.cmd('iperf3 -c 10.0.2.1 -p 5201 -t %d -i 1 -J > %s/iperf_classic.json 2>&1 &' % (duration, out))
     h1.cmd('iperf3 -c 10.0.2.1 -p 5202 -C dctcp -t %d -i 1 -J > %s/iperf_l4s.json 2>&1 &' % (duration, out))
     h1.cmd('python3 eval/latency_probe.py --ecn 1 --duration %d --out %s/probe_l4s.csv > %s/probe_l4s.txt 2>&1 &'
@@ -119,9 +156,17 @@ def run_experiment(net, mode, duration):
     time.sleep(5)
     check_ecn(h1, out)
 
-    time.sleep(max(0, duration - 5) + 4)
+    # 6. Attack: a UDP flood with ECT(1) (TOS = 1) that does not react to CE marks
+    if scenario == 'attack':
+        time.sleep(ATTACK_START - 5)
+        print('Attack: %s ECT(1) UDP flood for %d s' % (FLOOD_RATE, attack_len))
+        h1.cmd('iperf3 -c 10.0.2.1 -p 5203 -u -b %s -l 1400 -S 1 -t %d > /dev/null 2>&1 &'
+               % (FLOOD_RATE, attack_len))
+        time.sleep(duration - ATTACK_START + 4)
+    else:
+        time.sleep(max(0, duration - 5) + 4)
 
-    # 6. Stop everything
+    # 7. Stop everything
     r0.cmd('pkill -INT l4s_router')
     if mode == 'dualpi2':
         r0.cmd('kill $(cat %s/tc_loop.pid) 2>/dev/null' % out)
@@ -130,7 +175,7 @@ def run_experiment(net, mode, duration):
     time.sleep(1)
 
     print(h1.cmd('cat %s/probe_l4s.txt %s/probe_classic.txt' % (out, out)))
-    if mode in ('fifo', 'dualq'):
+    if mode in OUR_MODES:
         print(r0.cmd('cat %s/router_log.txt' % out))
     else:
         print(r0.cmd('tc -s qdisc show dev r0-eth1'))
@@ -139,8 +184,9 @@ def run_experiment(net, mode, duration):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--run', choices=['fifo', 'dualq', 'fq_codel', 'dualpi2'],
+    parser.add_argument('--run', choices=OUR_MODES + KERNEL_MODES,
                         help='run one experiment automatically instead of opening the CLI')
+    parser.add_argument('--scenario', choices=['normal', 'attack'], default='normal')
     parser.add_argument('--duration', type=int, default=30)
     args = parser.parse_args()
 
@@ -148,7 +194,7 @@ if __name__ == '__main__':
     net = build_network()
 
     if args.run:
-        run_experiment(net, args.run, args.duration)
+        run_experiment(net, args.run, args.scenario, args.duration)
     else:
         print('\nNext: mininet> r0 ./build/l4s_router config/router_config.ini dualq > eval/results/router_log.txt 2>&1 &')
         print('Then: mininet> h1 ping -c 5 10.0.2.1\n')

@@ -19,6 +19,9 @@ struct PacketInfo {
     uint8_t protocol = 0;  // 6 = TCP, 17 = UDP, 1 = ICMP
     uint8_t ecn     = 0;
     bool is_l4s     = false;  // true for ECT(1) and CE (RFC 9331 classifier)
+    uint16_t src_port = 0;    // TCP/UDP ports (0 for other protocols)
+    uint16_t dst_port = 0;
+    uint64_t flow_id  = 0;    // one number per flow (src ip, dst ip, ports, protocol)
 };
 
 PacketInfo parse_packet(const uint8_t* frame, int len);
