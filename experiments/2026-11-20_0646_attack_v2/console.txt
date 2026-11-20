@@ -1,0 +1,558 @@
+Run: experiments/2026-11-20_0646_attack_v2
+Scenario: attack | duration: 40 s | modes: dualq_basic dualq dualq_qp fq_codel dualpi2
+Git commit: 92cf4db
+Kernel: 7.0.0-43-generic
+make: Nothing to be done for 'all'.
+
+================ dualq_basic ================
+*** Configuring hosts
+h1 h2 r0 
+*** Starting controller
+
+*** Starting 0 switches
+
+*** Stopping 0 controllers
+
+*** Stopping 2 links
+..
+*** Stopping 0 switches
+
+*** Stopping 3 hosts
+h1 h2 r0 
+*** Done
+Allowed congestion controls: reno cubic dctcp
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h1: route to 10.0.2.2 uses: 10.0.2.2 via 10.0.1.254 dev h1-eth0 src 10.0.1.1 uid 0 
+h1: ECT(0) -> ECT(1) rewrite for TCP to 10.0.2.2:5202 installed
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h2: netem delay 20 ms on h2-eth0
+h2: default congestion control = dctcp
+h2: extra address 10.0.2.2 for the L4S flow
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+r0: kernel forwarding off, offloads off
+
+PING 10.0.2.1 (10.0.2.1) 56(84) bytes of data.
+64 bytes from 10.0.2.1: icmp_seq=1 ttl=63 time=40.2 ms
+64 bytes from 10.0.2.1: icmp_seq=2 ttl=63 time=20.2 ms
+64 bytes from 10.0.2.1: icmp_seq=3 ttl=63 time=20.2 ms
+
+--- 10.0.2.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2003ms
+rtt min/avg/max/mdev = 20.187/26.878/40.241/9.449 ms
+
+Running dualq_basic (attack scenario) for 40 s ...
+OK: L4S flow is using DCTCP with ECN
+Attack: 60M ECT(1) UDP flood for 20 s
+sent 4000, received 3997, lost 3
+RTT ms: p50 124.71 | p95 260.58 | p99 261.67 | max 262.86
+saved eval/results/dualq_basic/probe_l4s.csv
+sent 4000, received 3994, lost 6
+RTT ms: p50 20.28 | p95 38.92 | p99 41.45 | max 70.20
+saved eval/results/dualq_basic/probe_classic.csv
+
+Mode: dualq_basic | rate 50.0 Mbps | buffer 1500000 bytes
+Opened r0-eth0 (ifindex 2, mac ba:45:43:30:54:38)
+Opened r0-eth1 (ifindex 3, mac 62:29:12:51:31:a0)
+Router running, press Ctrl+C to stop
+
+----- dualq_basic summary -----
+queued 173559, sent 173534 (245.4 MB), reverse 52091
+tail drops 20563, AQM drops 25, classic CE marks 0, L4S CE marks 90640
+
+Results saved in eval/results/dualq_basic
+
+================ dualq ================
+*** Configuring hosts
+h1 h2 r0 
+*** Starting controller
+
+*** Starting 0 switches
+
+*** Stopping 0 controllers
+
+*** Stopping 2 links
+..
+*** Stopping 0 switches
+
+*** Stopping 3 hosts
+h1 h2 r0 
+*** Done
+Allowed congestion controls: reno cubic dctcp
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h1: route to 10.0.2.2 uses: 10.0.2.2 via 10.0.1.254 dev h1-eth0 src 10.0.1.1 uid 0 
+h1: ECT(0) -> ECT(1) rewrite for TCP to 10.0.2.2:5202 installed
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h2: netem delay 20 ms on h2-eth0
+h2: default congestion control = dctcp
+h2: extra address 10.0.2.2 for the L4S flow
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+r0: kernel forwarding off, offloads off
+
+PING 10.0.2.1 (10.0.2.1) 56(84) bytes of data.
+64 bytes from 10.0.2.1: icmp_seq=1 ttl=63 time=40.2 ms
+64 bytes from 10.0.2.1: icmp_seq=2 ttl=63 time=20.2 ms
+64 bytes from 10.0.2.1: icmp_seq=3 ttl=63 time=20.2 ms
+
+--- 10.0.2.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2003ms
+rtt min/avg/max/mdev = 20.180/26.871/40.186/9.414 ms
+
+Running dualq (attack scenario) for 40 s ...
+OK: L4S flow is using DCTCP with ECN
+Attack: 60M ECT(1) UDP flood for 20 s
+sent 4000, received 3545, lost 455
+RTT ms: p50 20.67 | p95 37.07 | p99 70.00 | max 145.74
+saved eval/results/dualq/probe_l4s.csv
+sent 4000, received 3459, lost 541
+RTT ms: p50 20.34 | p95 38.27 | p99 40.07 | max 60.88
+saved eval/results/dualq/probe_classic.csv
+
+Mode: dualq | rate 50.0 Mbps | buffer 1500000 bytes
+Overload handling ON (p_Cmax = 0.250)
+Opened r0-eth0 (ifindex 2, mac 6e:81:d8:c9:47:c1)
+Opened r0-eth1 (ifindex 3, mac 0e:00:a3:9c:b8:75)
+Router running, press Ctrl+C to stop
+
+----- dualq summary -----
+queued 187658, sent 163822 (232.2 MB), reverse 47805
+tail drops 0, AQM drops 838, classic CE marks 0, L4S CE marks 88857
+L4S overload drops 22998
+
+Results saved in eval/results/dualq
+
+================ dualq_qp ================
+*** Configuring hosts
+h1 h2 r0 
+*** Starting controller
+
+*** Starting 0 switches
+
+*** Stopping 0 controllers
+
+*** Stopping 2 links
+..
+*** Stopping 0 switches
+
+*** Stopping 3 hosts
+h1 h2 r0 
+*** Done
+Allowed congestion controls: reno cubic dctcp
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h1: route to 10.0.2.2 uses: 10.0.2.2 via 10.0.1.254 dev h1-eth0 src 10.0.1.1 uid 0 
+h1: ECT(0) -> ECT(1) rewrite for TCP to 10.0.2.2:5202 installed
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h2: netem delay 20 ms on h2-eth0
+h2: default congestion control = dctcp
+h2: extra address 10.0.2.2 for the L4S flow
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+r0: kernel forwarding off, offloads off
+
+PING 10.0.2.1 (10.0.2.1) 56(84) bytes of data.
+64 bytes from 10.0.2.1: icmp_seq=1 ttl=63 time=40.3 ms
+64 bytes from 10.0.2.1: icmp_seq=2 ttl=63 time=20.2 ms
+64 bytes from 10.0.2.1: icmp_seq=3 ttl=63 time=20.2 ms
+
+--- 10.0.2.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2002ms
+rtt min/avg/max/mdev = 20.190/26.893/40.278/9.464 ms
+
+Running dualq_qp (attack scenario) for 40 s ...
+OK: L4S flow is using DCTCP with ECN
+Attack: 60M ECT(1) UDP flood for 20 s
+sent 4000, received 3961, lost 39
+RTT ms: p50 20.21 | p95 20.70 | p99 21.26 | max 147.94
+saved eval/results/dualq_qp/probe_l4s.csv
+sent 4000, received 3544, lost 456
+RTT ms: p50 34.36 | p95 40.12 | p99 66.93 | max 109.17
+saved eval/results/dualq_qp/probe_classic.csv
+
+Mode: dualq_qp | rate 50.0 Mbps | buffer 1500000 bytes
+Overload handling ON (p_Cmax = 0.250)
+Queue protection ON (max 30000 bytes per flow in L4S queue, sanction 1000 ms)
+Opened r0-eth0 (ifindex 2, mac 0a:7b:51:45:27:1f)
+Opened r0-eth1 (ifindex 3, mac fe:0e:63:e8:5e:0b)
+Router running, press Ctrl+C to stop
+
+----- dualq_qp summary -----
+queued 188870, sent 164815 (233.1 MB), reverse 48736
+tail drops 0, AQM drops 23984, classic CE marks 0, L4S CE marks 6143
+L4S overload drops 71
+queue protection moved 106123 packets to Classic
+queue protection: 4 L4S flows seen
+  sanctioned 1 times, 116 packets moved to Classic: 10.0.1.1:42618 > 10.0.2.2:5202 tcp
+  sanctioned 20 times, 106007 packets moved to Classic: 10.0.1.1:44176 > 10.0.2.1:5203 udp
+
+Results saved in eval/results/dualq_qp
+
+================ fq_codel ================
+*** Configuring hosts
+h1 h2 r0 
+*** Starting controller
+
+*** Starting 0 switches
+
+*** Stopping 0 controllers
+
+*** Stopping 2 links
+..
+*** Stopping 0 switches
+
+*** Stopping 3 hosts
+h1 h2 r0 
+*** Done
+Allowed congestion controls: reno cubic dctcp
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h1: route to 10.0.2.2 uses: 10.0.2.2 via 10.0.1.254 dev h1-eth0 src 10.0.1.1 uid 0 
+h1: ECT(0) -> ECT(1) rewrite for TCP to 10.0.2.2:5202 installed
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h2: netem delay 20 ms on h2-eth0
+h2: default congestion control = dctcp
+h2: extra address 10.0.2.2 for the L4S flow
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+r0: kernel forwarding off, offloads off
+
+qdisc htb 1: root refcnt 19 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000
+qdisc fq_codel 20: parent 1:10 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+
+PING 10.0.2.1 (10.0.2.1) 56(84) bytes of data.
+64 bytes from 10.0.2.1: icmp_seq=1 ttl=63 time=40.2 ms
+64 bytes from 10.0.2.1: icmp_seq=2 ttl=63 time=20.1 ms
+64 bytes from 10.0.2.1: icmp_seq=3 ttl=63 time=20.1 ms
+
+--- 10.0.2.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2002ms
+rtt min/avg/max/mdev = 20.074/26.775/40.169/9.470 ms
+
+Running fq_codel (attack scenario) for 40 s ...
+OK: L4S flow is using DCTCP with ECN
+Attack: 60M ECT(1) UDP flood for 20 s
+sent 4000, received 4000, lost 0
+RTT ms: p50 20.18 | p95 20.32 | p99 20.40 | max 21.28
+saved eval/results/fq_codel/probe_l4s.csv
+sent 4000, received 4000, lost 0
+RTT ms: p50 20.18 | p95 20.32 | p99 20.39 | max 20.54
+saved eval/results/fq_codel/probe_classic.csv
+
+qdisc htb 1: root refcnt 19 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000
+ Sent 249872302 bytes 174217 pkt (dropped 68095, overlimits 173933 requeues 0) 
+ backlog 0b 0p requeues 0
+qdisc fq_codel 20: parent 1:10 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 249872302 bytes 174217 pkt (dropped 68095, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 1514 drop_overlimit 68032 new_flow_count 11284 ecn_mark 36013
+  new_flows_len 0 old_flows_len 2
+
+Results saved in eval/results/fq_codel
+
+================ dualpi2 ================
+*** Configuring hosts
+h1 h2 r0 
+*** Starting controller
+
+*** Starting 0 switches
+
+*** Stopping 0 controllers
+
+*** Stopping 2 links
+..
+*** Stopping 0 switches
+
+*** Stopping 3 hosts
+h1 h2 r0 
+*** Done
+Allowed congestion controls: reno cubic dctcp
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h1: route to 10.0.2.2 uses: 10.0.2.2 via 10.0.1.254 dev h1-eth0 src 10.0.1.1 uid 0 
+h1: ECT(0) -> ECT(1) rewrite for TCP to 10.0.2.2:5202 installed
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+h2: netem delay 20 ms on h2-eth0
+h2: default congestion control = dctcp
+h2: extra address 10.0.2.2 for the L4S flow
+
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+Actual changes:
+tx-checksum-ip-generic: off
+tx-generic-segmentation: off
+tx-tcp-segmentation: off
+tx-tcp-ecn-segmentation: off
+tx-tcp-mangleid-segmentation: off
+tx-tcp6-segmentation: off
+tx-udp-segmentation: off [not requested]
+tx-tcp-accecn-segmentation: off
+tx-checksum-sctp: off
+rx-checksum: off
+r0: kernel forwarding off, offloads off
+
+qdisc htb 1: root refcnt 19 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000
+qdisc dualpi2 20: parent 1:10 limit 10000p memlimit 30280000B target 15ms tupdate 16ms alpha 0.156250 beta 3.195312 step_thresh 1ms min_qlen_step 0p coupling_factor 2 drop_on_overload drop_dequeue classic_protection 10% l4s_ect split_gso 
+
+PING 10.0.2.1 (10.0.2.1) 56(84) bytes of data.
+64 bytes from 10.0.2.1: icmp_seq=1 ttl=63 time=40.2 ms
+64 bytes from 10.0.2.1: icmp_seq=2 ttl=63 time=20.1 ms
+64 bytes from 10.0.2.1: icmp_seq=3 ttl=63 time=20.1 ms
+
+--- 10.0.2.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2002ms
+rtt min/avg/max/mdev = 20.078/26.774/40.160/9.465 ms
+
+Running dualpi2 (attack scenario) for 40 s ...
+OK: L4S flow is using DCTCP with ECN
+Attack: 60M ECT(1) UDP flood for 20 s
+sent 4000, received 3583, lost 417
+RTT ms: p50 20.82 | p95 36.97 | p99 70.63 | max 115.62
+saved eval/results/dualpi2/probe_l4s.csv
+sent 4000, received 3474, lost 526
+RTT ms: p50 22.55 | p95 38.57 | p99 40.82 | max 164.34
+saved eval/results/dualpi2/probe_classic.csv
+
+qdisc htb 1: root refcnt 19 r2q 10 default 0x10 direct_packets_stat 0 direct_qlen 1000
+ Sent 244091808 bytes 171730 pkt (dropped 23434, overlimits 170254 requeues 0) 
+ backlog 0b 0p requeues 0
+qdisc dualpi2 20: parent 1:10 limit 10000p memlimit 30280000B target 15ms tupdate 16ms alpha 0.156250 beta 3.195312 step_thresh 1ms min_qlen_step 0p coupling_factor 2 drop_on_overload drop_dequeue classic_protection 10% l4s_ect split_gso 
+ Sent 244091808 bytes 171730 pkt (dropped 23434, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+prob 0.000000 delay_c 0us delay_l 0us
+pkts_in_c 41080 pkts_in_l 154084 maxq 578
+ecn_mark 175758 step_mark 87591
+credit -8280 (L-queue)
+memory_used 0 (max 1317064) of memory limit 30280000
+
+
+Results saved in eval/results/dualpi2
+
+Probe RTT in ms (base RTT is ~20 ms). Throughput in Mbps (link is 50 Mbps).
+
+            | L4S probe  p50/p95/p99 loss | Classic probe p50/p95/p99 loss | Throughput C / L / total
+dualq_basic |  124.7  260.6  261.7  0.1% |   20.3   38.9   41.5  0.1% |  12.0 /  10.8 /  22.7
+dualq       |   20.7   37.1   70.0 11.4% |   20.3   38.3   40.1 13.5% |  10.5 /  10.3 /  20.8
+dualq_qp    |   20.2   20.7   21.3  1.0% |   34.4   40.1   66.9 11.4% |  10.5 /  10.6 /  21.2
+fq_codel    |   20.2   20.3   20.4  0.0% |   20.2   20.3   20.4  0.0% |  18.2 /  18.6 /  36.7
+dualpi2     |   20.8   37.0   70.6 10.4% |   22.5   38.6   40.8 13.2% |  10.6 /  12.4 /  23.0
+
+Queue delay inside the bottleneck in ms (sampled every 100 ms; fq_codel does not report it)
+            | L4S queue mean/p99  | Classic mean/p99    | L4S flow DCTCP+ECN?
+dualq_basic |    99.93     241.19 |     5.47      20.50 | yes
+dualq       |     7.31      46.11 |     4.58      19.26 | yes
+dualq_qp    |     0.75       0.84 |    11.49      45.42 | yes
+fq_codel    |      nan        nan |      nan        nan | yes
+dualpi2     |     7.67      43.77 |     5.54      19.90 | yes
+(fifo has one queue: it is shown in the Classic column)
+
+DURING THE ATTACK (ECT(1) UDP flood, steady state from 2 s after it starts)
+            | L4S probe p50/p99 | Classic p50/p99   | Tput Classic / L4S / flood (Mbps)
+dualq_basic |   260.4    262.2 |    20.2     20.3 |   0.0 /   0.0 /  48.3
+dualq       |    35.2     38.0 |    20.2     21.1 |   0.4 /   0.2 /  47.7
+dualq_qp    |    20.2     22.3 |    35.0     46.4 |   0.2 /   0.9 /  47.2
+fq_codel    |    20.2     20.4 |    20.2     20.4 |  15.7 /  15.9 /  16.2
+dualpi2     |    35.2     37.9 |    20.4     23.5 |   0.4 /   0.2 /  47.9
+
+Saved eval/results/summary.csv
+Saved eval/results/latency_cdf.png
+Saved eval/results/latency_timeseries.png
+Saved eval/results/throughput.png
+Saved eval/results/internals_dualq_basic.png
+Saved eval/results/internals_dualq.png
+Saved eval/results/internals_dualq_qp.png

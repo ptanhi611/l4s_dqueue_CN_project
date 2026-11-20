@@ -1,0 +1,4 @@
+mode=dualq_qp
+scenario=normal
+duration=30
+flows_start=4.03

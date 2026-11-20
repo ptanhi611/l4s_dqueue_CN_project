@@ -1,0 +1,4 @@
+mode=fifo
+scenario=normal
+duration=30
+flows_start=4.05
