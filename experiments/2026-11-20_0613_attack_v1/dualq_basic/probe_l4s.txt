@@ -1,0 +1,3 @@
+sent 4000, received 3770, lost 230
+RTT ms: p50 20.29 | p95 260.68 | p99 262.64 | max 265.19
+saved eval/results/dualq_basic/probe_l4s.csv

@@ -91,11 +91,60 @@ too. They explain our design decisions in the report.
 
 ---
 
-## Run 3: (next) with real L4S traffic, Phase 2 + Phase 3
+## Run 3: 2026-11-20 06:10, normal_v1
 
-- **Code:** batch 4 (DCTCP allowed-list fix, RFC overload handling, queue protection, attack scenario)
-- Planned: `normal` scenario (all modes), then `attack` scenario (ECT(1) UDP flood, 60 Mbps, t = 10–30 s of 40 s)
-- **What to check first:** every mode prints `OK: L4S flow is using DCTCP with ECN`
+- **Code:** batch 4, commit 7394da9 (DCTCP allowed-list fix, overload handling, queue protection). Kernel 7.0.0-43
+- **Folder:** `2026-11-20_0610_normal_v1/`
+- **Scenario / modes / duration:** normal, fifo dualq dualq_qp fq_codel dualpi2, 30 s
+- **Status:** valid as a **repeat of the Classic-traffic validation** (reproduces Run 2). The L4S bulk flow was still not L4S.
+
+| Mode | L4S probe p50/p99/max (ms) | Classic probe p50/p95/p99 (ms) | Classic queue mean/p99 (ms) | Tput C / L / total |
+|---|---|---|---|---|
+| fifo | 180.1 / 259.9 / 260.2 | 180.2 / 258.7 / 260.0 | 133.5 / 239.5 (single queue) | 17.3 / 30.2 / 47.5 |
+| dualq (ours) | 20.2 / 20.3 / **86.0** | 34.6 / 40.8 / 42.0 | 10.9 / 21.6 | 24.9 / 22.5 / 47.4 |
+| dualq_qp (ours) | 20.2 / 20.4 / **142.6** | 33.7 / 40.4 / 42.8 | 10.3 / 22.1 | 24.0 / 22.7 / 46.7 |
+| fq_codel | 20.2 / 20.5 / 20.6 | 20.2 / 20.4 / 20.5 | n/a | 24.4 / 22.5 / 46.9 |
+| dualpi2 (kernel) | 20.2 / 20.4 / 20.5 | 34.4 / 40.6 / 45.7 | 12.3 / 21.4 | 27.0 / 20.2 / 47.2 |
+
+**Findings**
+1. **ECN still not negotiated**, even though h2 now really uses DCTCP (`h2: default congestion control = dctcp`). So the cubic-listener explanation was not the (whole) cause. New hypothesis: Linux 7.0's newer ECN negotiation (AccECN-related changes) treats our rewrite of the **SYN's** ECN bits as path tampering and disables ECN. Checked next with `--debug-ecn`.
+2. **Classic validation reproduced.** Classic probe p50 34.6 (ours) vs 34.4 ms (kernel); Classic queue mean 10.9 vs 12.3 ms; total throughput 47.4 vs 47.2 Mbps. Run 2 gave the same picture, so the result is repeatable.
+3. **Queue protection causes no harm in normal traffic.** dualq_qp ≈ dualq and moved 0 packets. Caveat: only the probe used the L4S queue, so it is not yet tested against a real DCTCP flow.
+4. **Startup latency spike in our router only.** The L4S probe reached 86 ms (dualq) and 143 ms (dualq_qp) once, about 0.3 s after start; kernel dualpi2 never went above 20.5 ms. Likely cause: our **starvation breaker** (Classic head waits > 50 ms, so Classic gets strict priority and L4S waits) firing during the Classic slow-start overshoot. The kernel uses credit-based weighted round robin (classic_protection 10%) without a time-based breaker.
+
+**Use in report:** repeatability of the Classic validation; scheduler design discussion (finding 4).
+
+---
+
+## Run 4: 2026-11-20 06:13, attack_v1
+
+- **Code:** same as Run 3 (commit 7394da9)
+- **Folder:** `2026-11-20_0613_attack_v1/`
+- **Scenario / modes / duration:** attack (60 Mbps ECT(1) UDP flood, t = 10–30 s), dualq_basic dualq dualq_qp fq_codel dualpi2, 40 s
+- **Status:** valid for **the flood vs the L4S queue** (the flood really was ECT(1)). The "L4S" TCP flow was Not-ECT (same ECN problem), so it was a second Classic flow.
+
+During the attack (steady state, 2 s after the flood starts):
+
+| Mode | L4S probe p50/p99 (ms) | L4S probe loss (whole run) | Classic probe p50/p99 (ms) | Tput Classic / "L4S" / flood (Mbps) |
+|---|---|---|---|---|
+| dualq_basic | **260.5 / 262.7** | 5.8% | 20.2 / 20.3 | 0.0 / 0.0 / 48.3 |
+| dualq (overload, ours) | **35.2 / 38.1** | 10.2% | 20.2 / 21.5 | 0.4 / 0.0 / 47.9 |
+| dualq_qp (ours) | **20.2 / 22.3** | **1.1%** | 35.0 / 46.1 | 0.4 / 0.6 / 47.7 |
+| fq_codel | 20.2 / 20.5 | 0.0% | 20.2 / 20.5 | 16.0 / 15.1 / 16.9 |
+| dualpi2 (kernel) | **35.2 / 37.9** | 10.8% | 20.4 / 24.6 | 0.4 / 0.5 / 47.8 |
+
+**Findings**
+1. **Without overload handling, the flood fills the shared buffer.** L4S probe 260 ms ≈ 1.5 MB × 8 / 48 Mbps ≈ 250 ms, with 20,992 tail drops.
+2. **Our overload handling reproduces Linux `sch_dualpi2` almost exactly under attack:** L4S probe 35.2/38.1 vs 35.2/37.9 ms, flood 47.9 vs 47.8 Mbps, probe loss 10.2% vs 10.8%. The L4S delay is bounded at about the 15 ms Classic target, so low latency is lost but the buffer does not fill. (The offline Sim 1 predicted 15.5 ms queue delay; here 35 − 20 = 15 ms. It matches.)
+3. **Queue protection keeps the L4S queue low-latency during the attack.** L4S probe 20.2/22.3 ms (no queuing) and 1.1% loss, versus 35 ms and ~10% loss for both overload-only implementations. The flood was sanctioned 20 times in 20 s (once per 1 s sanction period), 105,944 packets were moved to Classic, and no other flow was touched.
+4. **Two visible side effects in `latency_timeseries.png` (dualq_qp):**
+   - a large spike (~220 ms) right at attack onset. Likely the starvation breaker again: the flood suddenly fills the Classic queue, Classic waits > 50 ms, and L4S gets no service.
+   - a "comb" of small spikes (to ~25–28 ms RTT) every 1 s: when the sanction expires, the flood re-enters the L4S queue for up to 30 KB before it is sanctioned again.
+5. **Honest limitation: TCP throughput is not protected by any dual-queue variant.** In all dual-queue modes, including the kernel's, both TCP flows dropped to ≤ 0.6 Mbps while the unresponsive flood took ~48 Mbps. Only fq_codel shared the link fairly (16 / 15 / 17 Mbps) with no extra delay. Queue protection protects the **latency of the L4S queue**, not per-flow fairness.
+
+**Use in report:** validation of overload handling against the kernel (finding 2); the queue-protection result (finding 3, `latency_timeseries.png`); trade-off and limitation discussion (findings 4–5).
+
+**To do:** (a) fix ECN negotiation and repeat both runs with a real L4S flow; (b) test the scheduler without the 50 ms breaker (findings 4 of Runs 3 and 4); (c) consider shortening the sanction or rechecking it more gradually to remove the comb.
 
 ---
 

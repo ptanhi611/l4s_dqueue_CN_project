@@ -1,0 +1,8 @@
+Mode: fifo | rate 50.0 Mbps | buffer 1500000 bytes
+Opened r0-eth0 (ifindex 2, mac 56:b6:3e:b2:90:c9)
+Opened r0-eth1 (ifindex 3, mac fa:a9:fa:b6:1e:43)
+Router running, press Ctrl+C to stop
+
+----- fifo summary -----
+queued 130670, sent 130670 (189.5 MB), reverse 79005
+tail drops 987, AQM drops 0, classic CE marks 0, L4S CE marks 0

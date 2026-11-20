@@ -182,18 +182,88 @@ def run_experiment(net, mode, scenario, duration):
     print('Results saved in', out)
 
 
+def debug_ecn(net):
+    # Finds out WHY the L4S (DCTCP) flow does not get ECN.
+    # Uses plain kernel forwarding on r0 (no AQM, no l4s_router), so only the
+    # hosts and our tc rule on h1 are involved. Captures the SYN / SYN-ACK on h2
+    # (tos = ECN bits of the IP header, flags: E = ECE, W = CWR, e = AE in new tcpdump)
+    # and checks the result with ss on h1. Three tests:
+    #   A) DCTCP with our ECT(0) -> ECT(1) tc rule on h1 (the normal setup)
+    #   B) DCTCP without the tc rule
+    #   C) cubic with classic ECN (tcp_ecn=1 on h1), without the tc rule
+    h1, h2, r0 = net.get('h1', 'h2', 'r0')
+    r0.cmd('sysctl -q -w net.ipv4.ip_forward=1')
+    os.makedirs('eval/results', exist_ok=True)
+    report = []
+
+    def line(text=''):
+        print(text)
+        report.append(text)
+
+    line('Kernel: ' + os.uname().release)
+    for node in (h1, h2):
+        line('%s: tcp_ecn=%s tcp_ecn_fallback=%s default_cc=%s' % (
+            node.name, node.cmd('sysctl -n net.ipv4.tcp_ecn').strip(),
+            node.cmd('sysctl -n net.ipv4.tcp_ecn_fallback').strip(),
+            node.cmd('sysctl -n net.ipv4.tcp_congestion_control').strip()))
+    line('tc filter on h1: ' + ' '.join(h1.cmd('tc filter show dev h1-eth0 egress').split()))
+
+    def one_test(name, cc):
+        line('')
+        line('===== Test %s =====' % name)
+        h2.cmd('pkill iperf3; sleep 0.5')
+        h2.cmd('iperf3 -s -p 5202 -D')   # new listener, so it gets h2's current default (dctcp)
+        h2.cmd('tcpdump -l -i h2-eth0 -n -v -c 8 "tcp port 5202 and tcp[tcpflags] & tcp-syn != 0"'
+               ' > /tmp/syn_capture.txt 2>&1 &')
+        time.sleep(1)
+        h1.cmd('iperf3 -c 10.0.2.1 -p 5202 -C %s -t 3 > /dev/null 2>&1 &' % cc)
+        time.sleep(1.5)
+        ss = h1.cmd('ss -tin dst 10.0.2.1:5202')
+        time.sleep(3)
+        h2.cmd('pkill tcpdump')
+        time.sleep(0.5)
+        line('--- SYN / SYN-ACK seen at h2 (control connection first, then data connection) ---')
+        for text in h2.cmd('cat /tmp/syn_capture.txt').splitlines():
+            if 'tos' in text or 'Flags' in text:
+                line('  ' + ' '.join(text.split()))
+        line('--- ss on h1 during the transfer ---')
+        for text in ss.splitlines():
+            line('  ' + ' '.join(text.split()))
+        if 'dctcp-reno' in ss:
+            line('RESULT: ECN NOT negotiated (dctcp-reno)')
+        elif ' ecn' in ss:
+            line('RESULT: ECN negotiated')
+        else:
+            line('RESULT: unclear, see above')
+
+    one_test('A: dctcp WITH tc rule', 'dctcp')
+    h1.cmd('tc filter del dev h1-eth0 egress')
+    one_test('B: dctcp WITHOUT tc rule', 'dctcp')
+    h1.cmd('sysctl -q -w net.ipv4.tcp_ecn=1')
+    one_test('C: cubic + classic ECN, WITHOUT tc rule', 'cubic')
+    h2.cmd('pkill iperf3')
+
+    with open('eval/results/ecn_debug.txt', 'w') as f:
+        f.write('\n'.join(report) + '\n')
+    print('\nSaved eval/results/ecn_debug.txt')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--run', choices=OUR_MODES + KERNEL_MODES,
                         help='run one experiment automatically instead of opening the CLI')
     parser.add_argument('--scenario', choices=['normal', 'attack'], default='normal')
     parser.add_argument('--duration', type=int, default=30)
+    parser.add_argument('--debug-ecn', action='store_true',
+                        help='check ECN negotiation of the DCTCP flow (about 1 minute)')
     args = parser.parse_args()
 
     setLogLevel('info')
     net = build_network()
 
-    if args.run:
+    if args.debug_ecn:
+        debug_ecn(net)
+    elif args.run:
         run_experiment(net, args.run, args.scenario, args.duration)
     else:
         print('\nNext: mininet> r0 ./build/l4s_router config/router_config.ini dualq > eval/results/router_log.txt 2>&1 &')
