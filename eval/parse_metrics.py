@@ -108,11 +108,12 @@ def ecn_check(folder):
     if not os.path.exists(path):
         return '?'
     text = open(path).read()
-    if 'dctcp-reno' in text:
+    # working DCTCP: "dctcp:(ce_state:...)"; failed ECN: "dctcp-reno" / "fallback_mode"
+    if 'dctcp-reno' in text or 'fallback_mode' in text:
         return 'NO'
-    if 'dctcp' in text and ' ecn' in text:
+    if 'dctcp' in text:
         return 'yes'
-    return 'NO'
+    return '?'
 
 
 def read_run_info(folder):

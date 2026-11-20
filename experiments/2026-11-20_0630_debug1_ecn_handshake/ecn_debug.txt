@@ -1,0 +1,74 @@
+Kernel: 7.0.0-43-generic
+h1: tcp_ecn=2 tcp_ecn_fallback=1 default_cc=cubic
+h2: tcp_ecn=2 tcp_ecn_fallback=1 default_cc=dctcp
+tc filter on h1: filter protocol ip pref 49152 u32 chain 0 filter protocol ip pref 49152 u32 chain 0 fh 800: ht divisor 1 filter protocol ip pref 49152 u32 chain 0 fh 800::800 order 2048 key ht 800 bkt 0 terminal flowid not_in_hw match 00060000/00ff0000 at 8 match 00001452/0000ffff at 20 match 00020000/00030000 at 0 action order 1: pedit action pipe keys 1 index 1 ref 1 bind 1 key #0 at ipv4+0: val 00010000 mask fffcffff action order 2: csum (iph) action pass index 1 ref 1 bind 1
+
+===== Test A: dctcp WITH tc rule =====
+--- SYN / SYN-ACK seen at h2 (control connection first, then data connection) ---
+  06:30:59.071273 IP (tos 0x0, ttl 63, id 5354, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.53152 > 10.0.2.1.5202: Flags [S], cksum 0x9371 (correct), seq 460180651, win 42340, options [mss 1460,sackOK,TS val 3134878016 ecr 0,nop,wscale 9], length 0
+  06:30:59.091608 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.53152: Flags [S.], cksum 0x2dd4 (correct), seq 2878601095, ack 460180652, win 43440, options [mss 1460,sackOK,TS val 503554081 ecr 3134878016,nop,wscale 9], length 0
+  06:30:59.133677 IP (tos 0x0, ttl 63, id 47219, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.53164 > 10.0.2.1.5202: Flags [S], cksum 0x1119 (correct), seq 1005142891, win 42340, options [mss 1460,sackOK,TS val 3092209372 ecr 0,nop,wscale 9], length 0
+  06:30:59.153737 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.53164: Flags [S.], cksum 0x9e99 (correct), seq 2303573352, ack 1005142892, win 43440, options [mss 1460,sackOK,TS val 753531522 ecr 3092209372,nop,wscale 9], length 0
+--- ss on h1 during the transfer ---
+  State Recv-Q Send-Q Local Address:Port Peer Address:Port
+  ESTAB 0 0 10.0.1.1:53152 10.0.2.1:5202
+  cubic wscale:9,9 rto:237 rtt:36.106/19.792 ato:40 mss:1448 pmtu:1500 rcvmss:536 advmss:1448 cwnd:10 bytes_sent:185 bytes_acked:186 bytes_received:4 segs_out:9 segs_in:7 data_segs_out:3 data_segs_in:4 send 3208331bps lastsnd:1449 lastrcv:1387 lastack:1387 pacing_rate 6416632bps delivery_rate 1129536bps delivered:4 app_limited busy:40ms rcv_space:14480 rcv_ssthresh:42242 minrtt:20.399 snd_wnd:43520 rcv_wnd:42496
+  ESTAB 0 9698464 10.0.1.1:53164 10.0.2.1:5202
+  dctcp-reno wscale:9,9 rto:221 rtt:20.276/0.066 mss:1448 pmtu:1500 rcvmss:536 advmss:1448 cwnd:14321 bytes_sent:440066741 bytes_acked:430039734 segs_out:303960 segs_in:25933 data_segs_out:303955 dctcp:fallback_mode send 8181814165bps lastsnd:1 lastrcv:1434 lastack:1 pacing_rate 16334224144bps delivery_rate 3979772080bps delivered:297031 app_limited busy:1432ms rwnd_limited:720ms(50.3%) unacked:6925 reordering:300 reord_seen:8425 rcv_space:14480 rcv_ssthresh:42242 notsent:728432 minrtt:20.019 snd_wnd:10027008 rcv_wnd:42496
+RESULT: ECN NOT negotiated (dctcp-reno)
+
+===== Test B: dctcp WITHOUT tc rule =====
+--- SYN / SYN-ACK seen at h2 (control connection first, then data connection) ---
+  06:31:05.724363 IP (tos 0x0, ttl 63, id 28377, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.53170 > 10.0.2.1.5202: Flags [S], cksum 0x69d8 (correct), seq 967821367, win 42340, options [mss 1460,sackOK,TS val 530914351 ecr 0,nop,wscale 9], length 0
+  06:31:05.744444 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.53170: Flags [S.], cksum 0x44dd (correct), seq 4130740978, ack 967821368, win 43440, options [mss 1460,sackOK,TS val 1160235597 ecr 530914351,nop,wscale 9], length 0
+  06:31:05.785323 IP (tos 0x0, ttl 63, id 23236, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.53178 > 10.0.2.1.5202: Flags [S], cksum 0xe107 (correct), seq 2239073176, win 42340, options [mss 1460,sackOK,TS val 4039558318 ecr 0,nop,wscale 9], length 0
+  06:31:05.805360 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.53178: Flags [S.], cksum 0x34ca (correct), seq 1716016283, ack 2239073177, win 43440, options [mss 1460,sackOK,TS val 2281727228 ecr 4039558318,nop,wscale 9], length 0
+  6:31:05.724367 IP (tos 0x0, ttl 63, id 28377, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.53170 > 10.0.2.1.5202: Flags [S], cksum 0x69d8 (correct), seq 967821367, win 42340, options [mss 1460,sackOK,TS val 530914351 ecr 0,nop,wscale 9], length 0
+  06:31:05.744447 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.53170: Flags [S.], cksum 0x44dd (correct), seq 4130740978, ack 967821368, win 43440, options [mss 1460,sackOK,TS val 1160235597 ecr 530914351,nop,wscale 9], length 0
+  06:31:05.785325 IP (tos 0x0, ttl 63, id 23236, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.53178 > 10.0.2.1.5202: Flags [S], cksum 0xe107 (correct), seq 2239073176, win 42340, options [mss 1460,sackOK,TS val 4039558318 ecr 0,nop,wscale 9], length 0
+  06:31:05.805361 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.53178: Flags [S.], cksum 0x34ca (correct), seq 1716016283, ack 2239073177, win 43440, options [mss 1460,sackOK,TS val 2281727228 ecr 4039558318,nop,wscale 9], length 0
+--- ss on h1 during the transfer ---
+  State Recv-Q Send-Q Local Address:Port Peer Address:Port
+  ESTAB 0 0 10.0.1.1:53170 10.0.2.1:5202
+  cubic wscale:9,9 rto:221 rtt:20.174/5.702 ato:40 mss:1448 pmtu:1500 rcvmss:536 advmss:1448 cwnd:10 bytes_sent:185 bytes_acked:186 bytes_received:4 segs_out:9 segs_in:7 data_segs_out:3 data_segs_in:4 send 5742044bps lastsnd:1465 lastrcv:1402 lastack:1402 pacing_rate 11484016bps delivery_rate 1148232bps delivered:4 app_limited busy:40ms rcv_space:14480 rcv_ssthresh:42242 minrtt:20.066 snd_wnd:43520 rcv_wnd:42496
+  ESTAB 0 9437464 10.0.1.1:53178 10.0.2.1:5202
+  dctcp-reno wscale:9,9 rto:224 rtt:23.793/1.391 mss:1448 pmtu:1500 rcvmss:536 advmss:1448 cwnd:14018 bytes_sent:462326613 bytes_acked:452299606 segs_out:319336 segs_in:27866 data_segs_out:319331 dctcp:fallback_mode send 6824885975bps lastsnd:2 lastrcv:1432 lastack:6 pacing_rate 14510844472bps delivery_rate 3932120968bps delivered:312407 app_limited busy:1429ms rwnd_limited:762ms(53.3%) unacked:6925 reordering:300 reord_seen:9819 rcv_space:14480 rcv_ssthresh:42242 notsent:6516000 minrtt:20.029 snd_wnd:10027008 rcv_wnd:42496
+RESULT: ECN NOT negotiated (dctcp-reno)
+
+===== Test C: cubic + classic ECN, WITHOUT tc rule =====
+--- SYN / SYN-ACK seen at h2 (control connection first, then data connection) ---
+  06:31:12.381143 IP (tos 0x0, ttl 63, id 22590, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.38770 > 10.0.2.1.5202: Flags [SEW], cksum 0x4674 (correct), seq 1467339812, win 42340, options [mss 1460,sackOK,TS val 1579880154 ecr 0,nop,wscale 9], length 0
+  06:31:12.401247 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.38770: Flags [S.E], cksum 0xa891 (correct), seq 3015613713, ack 1467339813, win 43440, options [mss 1460,sackOK,TS val 3329458881 ecr 1579880154,nop,wscale 9], length 0
+  06:31:12.443152 IP (tos 0x0, ttl 63, id 39172, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.38774 > 10.0.2.1.5202: Flags [SEW], cksum 0x6dde (correct), seq 313380830, win 42340, options [mss 1460,sackOK,TS val 1830035857 ecr 0,nop,wscale 9], length 0
+  06:31:12.463259 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.38774: Flags [S.E], cksum 0x6d09 (correct), seq 1389861279, ack 313380831, win 43440, options [mss 1460,sackOK,TS val 3118552735 ecr 1830035857,nop,wscale 9], length 0
+  .381148 IP (tos 0x0, ttl 63, id 22590, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.38770 > 10.0.2.1.5202: Flags [SEW], cksum 0x4674 (correct), seq 1467339812, win 42340, options [mss 1460,sackOK,TS val 1579880154 ecr 0,nop,wscale 9], length 0
+  06:31:12.401251 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.38770: Flags [S.E], cksum 0xa891 (correct), seq 3015613713, ack 1467339813, win 43440, options [mss 1460,sackOK,TS val 3329458881 ecr 1579880154,nop,wscale 9], length 0
+  06:31:12.443155 IP (tos 0x0, ttl 63, id 39172, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.1.1.38774 > 10.0.2.1.5202: Flags [SEW], cksum 0x6dde (correct), seq 313380830, win 42340, options [mss 1460,sackOK,TS val 1830035857 ecr 0,nop,wscale 9], length 0
+  06:31:12.463263 IP (tos 0x2,ECT(0), ttl 64, id 0, offset 0, flags [DF], proto TCP (6), length 60)
+  10.0.2.1.5202 > 10.0.1.1.38774: Flags [S.E], cksum 0x6d09 (correct), seq 1389861279, ack 313380831, win 43440, options [mss 1460,sackOK,TS val 3118552735 ecr 1830035857,nop,wscale 9], length 0
+--- ss on h1 during the transfer ---
+  State Recv-Q Send-Q Local Address:Port Peer Address:Port
+  ESTAB 0 0 10.0.1.1:38770 10.0.2.1:5202
+  cubic wscale:9,9 rto:221 rtt:20.303/5.794 ato:40 mss:1448 pmtu:1500 rcvmss:536 advmss:1448 cwnd:10 bytes_sent:185 bytes_acked:186 bytes_received:4 segs_out:9 segs_in:7 data_segs_out:3 data_segs_in:4 send 5705561bps lastsnd:1468 lastrcv:1404 lastack:1404 pacing_rate 11410696bps delivery_rate 1127944bps delivered:4 app_limited busy:41ms rcv_space:14480 rcv_ssthresh:42242 minrtt:20.249 snd_wnd:43520 rcv_wnd:42496
+  ESTAB 0 11718272 10.0.1.1:38774 10.0.2.1:5202
+  cubic wscale:9,9 rto:227 rtt:26.221/0.081 mss:1448 pmtu:1500 rcvmss:536 advmss:1448 cwnd:7156 ssthresh:4496 bytes_sent:485122349 bytes_acked:479204766 segs_out:335078 segs_in:21304 data_segs_out:335073 send 3161401320bps lastrcv:1427 lastack:1 pacing_rate 3793554984bps delivery_rate 3887950288bps delivered:330986 app_limited busy:1424ms rwnd_limited:509ms(35.7%) unacked:4088 reordering:300 reord_seen:6231 rcv_space:14480 rcv_ssthresh:42242 notsent:5800688 minrtt:20.021 snd_wnd:7081472 rcv_wnd:42496
+RESULT: unclear, see above

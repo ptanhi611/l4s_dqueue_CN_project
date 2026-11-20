@@ -32,23 +32,37 @@ if [ "$NODE" = "h2" ]; then
     modprobe tcp_dctcp 2>/dev/null
     sysctl -q -w net.ipv4.tcp_congestion_control=dctcp
     echo "h2: default congestion control = $(sysctl -n net.ipv4.tcp_congestion_control)"
+
+    # 5. Second address for h2, used only by the L4S flow (see step 6 on h1)
+    ip addr add 10.0.2.2/24 dev h2-eth0
+    echo "h2: extra address 10.0.2.2 for the L4S flow"
 fi
 
 if [ "$NODE" = "h1" ]; then
-    # 5. L4S bulk sender trick.
-    #    Normal Linux has no TCP Prague. DCTCP is a scalable congestion control
-    #    but it sends ECT(0). For TCP packets going to port 5202 that are ECT(0),
-    #    this rule rewrites the ECN bits to ECT(1) and fixes the IP checksum.
-    #    Packets that are not ECT(0) are left alone.
-    #    So:  iperf3 -c 10.0.2.1 -p 5202 -C dctcp   ==> L4S flow
-    #         iperf3 -c 10.0.2.1 -p 5201            ==> Classic (cubic) flow
+    # 6. L4S sender: DCTCP must be active BEFORE the SYN is sent, otherwise the SYN
+    #    does not ask for ECN and DCTCP falls back to Reno ("dctcp-reno").
+    #    (iperf3 -C only switches the congestion control after the handshake.)
+    #    Linux can choose the congestion control per route: everything h1 sends to
+    #    10.0.2.2 uses DCTCP from the first packet. The Classic flow uses 10.0.2.1 (cubic).
     modprobe tcp_dctcp 2>/dev/null
+    ip route add 10.0.2.2/32 via 10.0.1.254 congctl dctcp
+    echo "h1: route to 10.0.2.2 uses: $(ip route get 10.0.2.2 | head -1)"
+
+    # 7. L4S marking trick. Normal Linux has no TCP Prague, and DCTCP sends ECT(0).
+    #    For TCP packets to 10.0.2.2:5202 that are ECT(0) and are NOT the SYN,
+    #    rewrite the ECN bits to ECT(1) and fix the IP checksum.
+    #    (We leave the SYN alone so the ECN handshake sees exactly what DCTCP sent.)
+    #    So:  iperf3 -c 10.0.2.2 -p 5202   ==> L4S flow (DCTCP, ECT(1))
+    #         iperf3 -c 10.0.2.1 -p 5201   ==> Classic flow (cubic, Not-ECT)
     tc qdisc add dev h1-eth0 clsact
     tc filter add dev h1-eth0 egress protocol ip u32 \
         match ip protocol 6 0xff \
+        match ip dst 10.0.2.2/32 \
         match ip dport 5202 0xffff \
         match ip tos 0x02 0x03 \
+        match u8 0x00 0x02 at 33 \
         action pedit ex munge ip tos set 0x01 retain 0x03 pipe \
         action csum ip
-    echo "h1: ECT(0) -> ECT(1) rewrite for TCP port 5202 installed"
+    # (at 33 = TCP flags byte: 20 B IP header + 13; bit 0x02 = SYN must be 0)
+    echo "h1: ECT(0) -> ECT(1) rewrite for TCP to 10.0.2.2:5202 installed"
 fi

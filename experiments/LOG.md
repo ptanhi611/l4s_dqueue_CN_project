@@ -15,7 +15,7 @@ too. They explain our design decisions in the report.
 | Base RTT | 20 ms (netem delay on h2's egress, ACK path) |
 | Buffer | 1.5 MB shared (our router); kernel defaults for fq_codel / dualpi2 |
 | Classic flow | iperf3 TCP cubic, h1 → h2:5201, no ECN |
-| L4S flow | iperf3 TCP DCTCP, h1 → h2:5202, ECT(0) rewritten to ECT(1) by `tc pedit` on h1 |
+| L4S flow | iperf3 TCP DCTCP, h1 → h2:5202, ECT(0) rewritten to ECT(1) by `tc pedit` on h1. **From Run 5 on:** sent to h2's second address 10.0.2.2, whose route on h1 has `congctl dctcp` (DCTCP active from the SYN on); the SYN itself is not rewritten |
 | Probes | UDP, 100 B every 10 ms, one ECT(1) (L4S queue), one Not-ECT (Classic queue) |
 | AQM settings | target 15 ms, Tupdate 16 ms, α 0.16, β 3.2, k 2, L4S step 1 ms (RFC 9332 defaults) |
 
@@ -145,6 +145,30 @@ During the attack (steady state, 2 s after the flood starts):
 **Use in report:** validation of overload handling against the kernel (finding 2); the queue-protection result (finding 3, `latency_timeseries.png`); trade-off and limitation discussion (findings 4–5).
 
 **To do:** (a) fix ECN negotiation and repeat both runs with a real L4S flow; (b) test the scheduler without the 50 ms breaker (findings 4 of Runs 3 and 4); (c) consider shortening the sanction or rechecking it more gradually to remove the comb.
+
+---
+
+## Debug 1: 2026-11-20 06:30, ECN handshake capture (`--debug-ecn`)
+
+- **Code:** batch 5 diagnostic, plain kernel forwarding on r0 (no AQM)
+- **Folder:** `2026-11-20_0630_debug1_ecn_handshake/ecn_debug.txt`
+- **Question:** why does the DCTCP flow never get ECN (Runs 1–4)?
+
+| Test | SYN from h1 (seen at h2) | SYN-ACK from h2 | Result (ss on h1) |
+|---|---|---|---|
+| A: `iperf3 -C dctcp`, with our tc rule | `Flags [S]`, tos 0x0 (no ECN request) | `[S.]` | `dctcp-reno`, `dctcp:fallback_mode` |
+| B: `iperf3 -C dctcp`, without tc rule | `Flags [S]`, tos 0x0 (no ECN request) | `[S.]` | `dctcp-reno`, `dctcp:fallback_mode` |
+| C: cubic, `tcp_ecn=1`, without tc rule | `Flags [SEW]` (asks for ECN) | `[S.E]` (ECN accepted) | cubic (ECN negotiated) |
+
+**Findings**
+1. **Root cause:** the data connection's SYN did not ask for ECN at all (no ECE/CWR flags). DCTCP was switched on only *after* the handshake (iperf3 `-C`), found no ECN, and fell back to Reno. A and B are identical, so **our tc rule was not the cause**. That hypothesis is rejected.
+2. ECN negotiation through the path works when the SYN asks for it (test C).
+3. Earlier hypotheses, for the record: (Run 1) the rule marked the SYN; (Run 2) h2's cubic listener refused an ECN-marked SYN; (Run 3) kernel 7.0 handshake changes. These were plausible but not the root cause. Measuring the handshake directly found the real cause in one run.
+4. **Tooling bug found:** `ss` on this system does not print the `ecn`, `ts` or `sack` flags, so our "DCTCP+ECN" check could never succeed. Fixed: the check now looks for `dctcp:(ce_state...` (working) vs `dctcp-reno` / `fallback_mode` (failed).
+
+**Fix (batch 6):** h2 gets a second address 10.0.2.2. h1's route to it uses `congctl dctcp`, so DCTCP is active from the SYN on. The L4S flow uses 10.0.2.2 and the Classic flow keeps 10.0.2.1 (cubic, unchanged). The tc rule no longer touches the SYN.
+
+**Use in report:** methodology and debugging section: why we measured the handshake instead of guessing, and the lesson about congestion-control selection timing.
 
 ---
 

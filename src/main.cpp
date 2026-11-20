@@ -82,6 +82,11 @@ bool parse_mac(const std::string& s, uint8_t* mac) {
     return n == 6;
 }
 
+// True if two IPv4 addresses (network byte order) are in the same /24 subnet
+bool same_subnet(uint32_t a, uint32_t b) {
+    return (ntohl(a) >> 8) == (ntohl(b) >> 8);
+}
+
 double ms_between(Clock::time_point a, Clock::time_point b) {
     return std::chrono::duration<double, std::milli>(b - a).count();
 }
@@ -210,7 +215,10 @@ int main(int argc, char* argv[]) {
             if (n > 1514) st.big_frames++;
 
             PacketInfo info = parse_packet(buf, n);
-            if (!info.is_ipv4 || info.dst_ip != h2_ip) continue;  // ARP, IPv6, or traffic for r0 itself
+            // Forward only IPv4 traffic for h2's subnet (h2 has 10.0.2.1 and 10.0.2.2).
+            // ARP, IPv6, and traffic for r0 itself are ignored.
+            if (!info.is_ipv4 || !same_subnet(info.dst_ip, h2_ip)) continue;
+            if ((ntohl(info.dst_ip) & 0xFF) == 254) continue;  // 10.0.2.254 is r0 itself
             if (!decrement_ttl(buf)) continue;
             set_macs(buf, sock_out.get_mac(), h2_mac);
 

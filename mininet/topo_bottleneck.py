@@ -81,18 +81,29 @@ def setup_kernel_baseline(r0, mode):
     return True
 
 
+def ecn_state(ss):
+    # Reads "ss -tin" output for the L4S connection.
+    #   working DCTCP shows  "dctcp:(ce_state:...,alpha:...)"
+    #   failed ECN shows     "dctcp-reno" and "dctcp:fallback_mode"
+    # (ss on newer systems does not print an "ecn" flag, so we do not rely on it)
+    if 'dctcp-reno' in ss or 'fallback_mode' in ss:
+        return 'NO'
+    if 'dctcp' in ss:
+        return 'yes'
+    return '?'
+
+
 def check_ecn(h1, out):
-    # "ss -tin" lists h1's TCP connections with their congestion control and flags.
-    # Good L4S flow:  "dctcp" + "ecn".   Broken:  "dctcp-reno" (= ECN was not negotiated).
-    ss = h1.cmd('ss -tin dst 10.0.2.1')
+    ss = h1.cmd('ss -tin dst 10.0.2.2')
     with open(out + '/ss_check.txt', 'w') as f:
         f.write(ss)
-    if 'dctcp-reno' in ss:
-        print('WARNING: L4S flow fell back to dctcp-reno, ECN was NOT negotiated. See %s/ss_check.txt' % out)
-    elif 'dctcp' in ss and ' ecn' in ss:
+    state = ecn_state(ss)
+    if state == 'yes':
         print('OK: L4S flow is using DCTCP with ECN')
+    elif state == 'NO':
+        print('WARNING: L4S flow fell back to dctcp-reno, ECN was NOT negotiated. See %s/ss_check.txt' % out)
     else:
-        print('WARNING: could not find a DCTCP+ECN connection. See %s/ss_check.txt' % out)
+        print('WARNING: could not find the DCTCP connection. See %s/ss_check.txt' % out)
 
 
 def run_experiment(net, mode, scenario, duration):
@@ -140,7 +151,8 @@ def run_experiment(net, mode, scenario, duration):
     # 4. Traffic from h1: one Classic bulk flow, one L4S bulk flow, two latency probes
     print('Running %s (%s scenario) for %d s ...' % (mode, scenario, duration))
     h1.cmd('iperf3 -c 10.0.2.1 -p 5201 -t %d -i 1 -J > %s/iperf_classic.json 2>&1 &' % (duration, out))
-    h1.cmd('iperf3 -c 10.0.2.1 -p 5202 -C dctcp -t %d -i 1 -J > %s/iperf_l4s.json 2>&1 &' % (duration, out))
+    # L4S flow goes to h2's second address 10.0.2.2: h1's route to it uses DCTCP from the SYN on
+    h1.cmd('iperf3 -c 10.0.2.2 -p 5202 -t %d -i 1 -J > %s/iperf_l4s.json 2>&1 &' % (duration, out))
     h1.cmd('python3 eval/latency_probe.py --ecn 1 --duration %d --out %s/probe_l4s.csv > %s/probe_l4s.txt 2>&1 &'
            % (duration, out, out))
     h1.cmd('python3 eval/latency_probe.py --ecn 0 --duration %d --out %s/probe_classic.csv > %s/probe_classic.txt 2>&1 &'
@@ -188,9 +200,8 @@ def debug_ecn(net):
     # hosts and our tc rule on h1 are involved. Captures the SYN / SYN-ACK on h2
     # (tos = ECN bits of the IP header, flags: E = ECE, W = CWR, e = AE in new tcpdump)
     # and checks the result with ss on h1. Three tests:
-    #   A) DCTCP with our ECT(0) -> ECT(1) tc rule on h1 (the normal setup)
-    #   B) DCTCP without the tc rule
-    #   C) cubic with classic ECN (tcp_ecn=1 on h1), without the tc rule
+    #   A) the old way: iperf3 -C dctcp (DCTCP switched on only after the SYN)
+    #   B) the new way: route to 10.0.2.2 with "congctl dctcp" (DCTCP from the SYN on)
     h1, h2, r0 = net.get('h1', 'h2', 'r0')
     r0.cmd('sysctl -q -w net.ipv4.ip_forward=1')
     os.makedirs('eval/results', exist_ok=True)
@@ -207,8 +218,10 @@ def debug_ecn(net):
             node.cmd('sysctl -n net.ipv4.tcp_ecn_fallback').strip(),
             node.cmd('sysctl -n net.ipv4.tcp_congestion_control').strip()))
     line('tc filter on h1: ' + ' '.join(h1.cmd('tc filter show dev h1-eth0 egress').split()))
+    route = h1.cmd('ip route get 10.0.2.2').strip()
+    line('h1 route to 10.0.2.2: ' + (route.splitlines()[0] if route else 'none'))
 
-    def one_test(name, cc):
+    def one_test(name, dest, cc_option):
         line('')
         line('===== Test %s =====' % name)
         h2.cmd('pkill iperf3; sleep 0.5')
@@ -216,9 +229,9 @@ def debug_ecn(net):
         h2.cmd('tcpdump -l -i h2-eth0 -n -v -c 8 "tcp port 5202 and tcp[tcpflags] & tcp-syn != 0"'
                ' > /tmp/syn_capture.txt 2>&1 &')
         time.sleep(1)
-        h1.cmd('iperf3 -c 10.0.2.1 -p 5202 -C %s -t 3 > /dev/null 2>&1 &' % cc)
+        h1.cmd('iperf3 -c %s -p 5202 %s -t 3 > /dev/null 2>&1 &' % (dest, cc_option))
         time.sleep(1.5)
-        ss = h1.cmd('ss -tin dst 10.0.2.1:5202')
+        ss = h1.cmd('ss -tin dst %s:5202' % dest)
         time.sleep(3)
         h2.cmd('pkill tcpdump')
         time.sleep(0.5)
@@ -229,23 +242,28 @@ def debug_ecn(net):
         line('--- ss on h1 during the transfer ---')
         for text in ss.splitlines():
             line('  ' + ' '.join(text.split()))
-        if 'dctcp-reno' in ss:
-            line('RESULT: ECN NOT negotiated (dctcp-reno)')
-        elif ' ecn' in ss:
-            line('RESULT: ECN negotiated')
+        state = ecn_state(ss)
+        if state == 'yes':
+            line('RESULT: DCTCP with ECN is working')
+        elif state == 'NO':
+            line('RESULT: ECN NOT negotiated (dctcp-reno / fallback_mode)')
         else:
-            line('RESULT: unclear, see above')
+            line('RESULT: no DCTCP connection found (expected for a cubic test)')
 
-    one_test('A: dctcp WITH tc rule', 'dctcp')
-    h1.cmd('tc filter del dev h1-eth0 egress')
-    one_test('B: dctcp WITHOUT tc rule', 'dctcp')
-    h1.cmd('sysctl -q -w net.ipv4.tcp_ecn=1')
-    one_test('C: cubic + classic ECN, WITHOUT tc rule', 'cubic')
+    # A: the old way (iperf3 -C dctcp switches DCTCP on only after the SYN) -> expected to FAIL
+    one_test('A: old way, iperf3 -C dctcp to 10.0.2.1', '10.0.2.1', '-C dctcp')
+    # B: the new way (route to 10.0.2.2 uses DCTCP from the SYN on), with our tc rule -> expected OK
+    one_test('B: new way, DCTCP route to 10.0.2.2, with tc rule', '10.0.2.2', '')
     h2.cmd('pkill iperf3')
 
-    with open('eval/results/ecn_debug.txt', 'w') as f:
+    # Save straight into experiments/ so it is kept
+    folder = 'experiments/%s_ecn_debug' % time.strftime('%Y-%m-%d_%H%M')
+    os.makedirs(folder, exist_ok=True)
+    with open(folder + '/ecn_debug.txt', 'w') as f:
         f.write('\n'.join(report) + '\n')
-    print('\nSaved eval/results/ecn_debug.txt')
+    if os.environ.get('SUDO_USER'):
+        os.system('chown -R %s experiments' % os.environ['SUDO_USER'])
+    print('\nSaved %s/ecn_debug.txt' % folder)
 
 
 if __name__ == '__main__':

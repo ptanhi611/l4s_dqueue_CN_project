@@ -168,7 +168,9 @@ sudo ./eval/traffic_profile.sh attack_check attack 40          # dualq_basic dua
 | `fq_codel` | Linux kernel fq_codel (baseline) |
 | `dualpi2` | Linux kernel `sch_dualpi2` (reference RFC 9332 implementation, kernel 6.17+) |
 
-Scenarios: `normal` = 1 Classic (cubic) flow + 1 L4S (DCTCP, ECT(1)) flow + 2 latency probes.
+Scenarios: `normal` = 1 Classic (cubic) flow to 10.0.2.1 + 1 L4S (DCTCP, ECT(1)) flow to 10.0.2.2 + 2 latency probes.
+(The L4S flow uses h2's second address because h1's route to 10.0.2.2 has `congctl dctcp`: DCTCP must be
+active before the SYN to negotiate ECN. Check ECN with `sudo python3 mininet/topo_bottleneck.py --debug-ecn`.)
 `attack` = normal + a 60 Mbps ECT(1) UDP flood that ignores CE marks (from t=10 s until 10 s before the end).
 
 ### Step 5: Results, Graphs and the Experiment Log
