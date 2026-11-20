@@ -1,0 +1,8 @@
+mode=dualpi2
+scenario=attack
+duration=40
+config=config/router_config.ini
+flows_start=4.05
+attack_start=10
+attack_end=30
+flood_rate=60M

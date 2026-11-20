@@ -1,0 +1,3 @@
+sent 3000, received 2999, lost 1
+RTT ms: p50 195.21 | p95 256.37 | p99 259.82 | max 260.11
+saved eval/results/fifo/probe_classic.csv

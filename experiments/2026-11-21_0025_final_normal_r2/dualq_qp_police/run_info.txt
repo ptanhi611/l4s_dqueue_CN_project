@@ -1,0 +1,5 @@
+mode=dualq_qp_police
+scenario=normal
+duration=30
+config=config/router_config.ini
+flows_start=4.03

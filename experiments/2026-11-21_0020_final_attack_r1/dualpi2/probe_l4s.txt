@@ -1,0 +1,3 @@
+sent 4000, received 3597, lost 403
+RTT ms: p50 20.83 | p95 37.04 | p99 78.50 | max 129.65
+saved eval/results/dualpi2/probe_l4s.csv

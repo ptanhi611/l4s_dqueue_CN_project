@@ -1,0 +1,10 @@
+Mode: dualq | rate 50.0 Mbps | buffer 1500000 bytes
+Overload handling ON (p_Cmax = 0.250)
+Opened r0-eth0 (ifindex 2, mac 12:1d:f1:c7:4d:bf)
+Opened r0-eth1 (ifindex 3, mac fa:e9:f6:e3:4c:71)
+Router running, press Ctrl+C to stop
+
+----- dualq summary -----
+queued 129311, sent 129284 (187.4 MB), reverse 74696
+tail drops 0, AQM drops 27, classic CE marks 0, L4S CE marks 2790
+L4S overload drops 0

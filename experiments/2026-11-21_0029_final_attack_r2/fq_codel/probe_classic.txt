@@ -1,0 +1,3 @@
+sent 4001, received 4001, lost 0
+RTT ms: p50 20.18 | p95 20.32 | p99 20.41 | max 20.52
+saved eval/results/fq_codel/probe_classic.csv

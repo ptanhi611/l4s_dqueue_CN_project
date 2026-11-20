@@ -1,0 +1,17 @@
+Mode: dualq_qp_police | rate 50.0 Mbps | buffer 1500000 bytes
+Overload handling ON (p_Cmax = 0.250)
+Queue protection ON (max 30000 bytes per flow in L4S queue, sanction 1000 ms)
+Sanctioned flows limited to 5.0 Mbps
+Opened r0-eth0 (ifindex 2, mac fe:b7:b8:c7:ce:62)
+Opened r0-eth1 (ifindex 3, mac 2e:66:e3:25:98:ba)
+Router running, press Ctrl+C to stop
+
+----- dualq_qp_police summary -----
+queued 171643, sent 171604 (248.1 MB), reverse 94516
+tail drops 0, AQM drops 39, classic CE marks 0, L4S CE marks 4161
+L4S overload drops 0
+queue protection moved 108417 packets to Classic
+rate limit dropped 97889 packets of sanctioned flows
+queue protection: 4 L4S flows seen
+  sanctioned 20 times, 106324 packets moved to Classic, 97649 dropped by rate limit: 10.0.1.1:33894 > 10.0.2.1:5203 udp
+  sanctioned 5 times, 2093 packets moved to Classic, 240 dropped by rate limit: 10.0.1.1:46608 > 10.0.2.2:5202 tcp

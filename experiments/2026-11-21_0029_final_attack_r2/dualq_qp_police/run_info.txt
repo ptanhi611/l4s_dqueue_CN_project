@@ -1,0 +1,8 @@
+mode=dualq_qp_police
+scenario=attack
+duration=40
+config=config/router_config.ini
+flows_start=4.03
+attack_start=10
+attack_end=30
+flood_rate=60M

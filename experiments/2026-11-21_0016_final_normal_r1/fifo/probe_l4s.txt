@@ -1,0 +1,3 @@
+sent 3000, received 2999, lost 1
+RTT ms: p50 194.48 | p95 243.17 | p99 260.00 | max 267.57
+saved eval/results/fifo/probe_l4s.csv

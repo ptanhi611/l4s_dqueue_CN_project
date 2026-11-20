@@ -1,0 +1,5 @@
+mode=fifo
+scenario=normal
+duration=30
+config=config/router_config.ini
+flows_start=4.06

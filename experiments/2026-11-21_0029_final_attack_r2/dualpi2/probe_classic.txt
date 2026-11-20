@@ -1,0 +1,3 @@
+sent 4000, received 3451, lost 549
+RTT ms: p50 22.70 | p95 38.56 | p99 42.74 | max 162.75
+saved eval/results/dualpi2/probe_classic.csv
