@@ -22,13 +22,24 @@ if [ "$NODE" = "h2" ]; then
     #    This is only a delay line, no rate limit, so no queue builds here.
     tc qdisc add dev h2-eth0 root netem delay 20ms limit 100000
     echo "h2: netem delay 20 ms on h2-eth0"
+
+    # 4. Receiver side of the L4S flow must also be DCTCP:
+    #    - DCTCP puts ECT(0) on its SYN. A cubic listener sees an ECN-marked SYN
+    #      as suspicious and refuses ECN. A DCTCP listener accepts it.
+    #    - A DCTCP receiver echoes every CE mark accurately (classic ECN does not).
+    #    h2 only sends ACKs, so this does not change the Classic flow's behaviour
+    #    (the Classic sender h1 uses cubic and does not ask for ECN).
+    modprobe tcp_dctcp 2>/dev/null
+    sysctl -q -w net.ipv4.tcp_congestion_control=dctcp
+    echo "h2: default congestion control = $(sysctl -n net.ipv4.tcp_congestion_control)"
 fi
 
 if [ "$NODE" = "h1" ]; then
-    # 4. L4S bulk sender trick.
+    # 5. L4S bulk sender trick.
     #    Normal Linux has no TCP Prague. DCTCP is a scalable congestion control
-    #    but it sends ECT(0). For TCP traffic going to port 5202, this rule
-    #    rewrites ECN bits ECT(0) -> ECT(1) and fixes the IP checksum.
+    #    but it sends ECT(0). For TCP packets going to port 5202 that are ECT(0),
+    #    this rule rewrites the ECN bits to ECT(1) and fixes the IP checksum.
+    #    Packets that are not ECT(0) are left alone.
     #    So:  iperf3 -c 10.0.2.1 -p 5202 -C dctcp   ==> L4S flow
     #         iperf3 -c 10.0.2.1 -p 5201            ==> Classic (cubic) flow
     modprobe tcp_dctcp 2>/dev/null
@@ -36,7 +47,8 @@ if [ "$NODE" = "h1" ]; then
     tc filter add dev h1-eth0 egress protocol ip u32 \
         match ip protocol 6 0xff \
         match ip dport 5202 0xffff \
+        match ip tos 0x02 0x03 \
         action pedit ex munge ip tos set 0x01 retain 0x03 pipe \
         action csum ip
-    echo "h1: ECT(1) rewrite for TCP port 5202 installed"
+    echo "h1: ECT(0) -> ECT(1) rewrite for TCP port 5202 installed"
 fi

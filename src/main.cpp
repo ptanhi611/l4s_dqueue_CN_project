@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/prctl.h>
 
 #include <cstdio>
 #include <cstring>
@@ -163,6 +164,10 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
+    // Ask Linux to wake us up on time (default timer slack is 50 us,
+    // which is a big error when one packet takes only ~240 us at 50 Mbps)
+    prctl(PR_SET_TIMERSLACK, 1);
+
     uint8_t buf[65536];
     Clock::time_point start = Clock::now();
     Clock::time_point next_tx = start;      // when the 50 Mbps link is free again
@@ -249,8 +254,11 @@ int main(int argc, char* argv[]) {
                 }
                 if (use_aqm) scheduler.notify_packet_dispatched(q, len);
 
-                // Pacing: this packet keeps the link busy for len*8/rate seconds
-                if (next_tx < now) next_tx = now;
+                // Pacing: this packet keeps the link busy for len*8/rate seconds.
+                // Keep to the schedule: if we woke up a little late, the next packet
+                // goes out right away to catch up. Only when the link was idle
+                // (more than 1 ms behind) do we restart the schedule from now.
+                if (now - next_tx > std::chrono::milliseconds(1)) next_tx = now;
                 next_tx += std::chrono::duration_cast<Clock::duration>(
                     std::chrono::duration<double>(len * 8.0 / rate_bps));
             }
@@ -302,6 +310,8 @@ int main(int argc, char* argv[]) {
            (unsigned long)st.tail_drops, (unsigned long)st.aqm_drops,
            (unsigned long)st.c_marks, (unsigned long)st.l_marks);
     if (st.send_errors) printf("send errors: %lu\n", (unsigned long)st.send_errors);
+    unsigned int kernel_drops = sock_in.get_kernel_drops();
+    if (kernel_drops) printf("WARNING: kernel dropped %u frames before we could read them (router too slow?)\n", kernel_drops);
     if (st.big_frames) printf("WARNING: %lu frames > 1514 bytes. Turn off offloads (see mininet/configure_routes.sh)\n",
                               (unsigned long)st.big_frames);
 

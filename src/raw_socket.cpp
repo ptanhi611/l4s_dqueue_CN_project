@@ -97,3 +97,10 @@ bool RawSocket::send_frame(const uint8_t* buf, int len) {
     int sent = send(fd_, buf, len, 0);
     return sent == len;
 }
+
+unsigned int RawSocket::get_kernel_drops() {
+    struct tpacket_stats stats;
+    socklen_t len = sizeof(stats);
+    if (getsockopt(fd_, SOL_PACKET, PACKET_STATISTICS, &stats, &len) < 0) return 0;
+    return stats.tp_drops;
+}

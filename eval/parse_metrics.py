@@ -56,6 +56,64 @@ def read_iperf(folder, name):
         return float('nan')
 
 
+def parse_tc_time(text):
+    # tc prints times like "850us", "12.3ms" or "1.2s". Returns ms.
+    match = re.match(r'([\d.]+)(us|ms|s)', text)
+    if not match:
+        return 0.0
+    value, unit = float(match.group(1)), match.group(2)
+    if unit == 'us':
+        return value / 1000.0
+    if unit == 's':
+        return value * 1000.0
+    return value
+
+
+def read_queue_delays(folder, mode):
+    # Returns (l4s_list, classic_list) of queue delay samples in ms, taken every 100 ms.
+    #   our router:      router_stats.csv (written by l4s_router)
+    #   kernel dualpi2:  tc_samples.txt   (lines like "prob 0.01 delay_c 12ms delay_l 800us")
+    l4s, classic = [], []
+    if mode in ('fifo', 'dualq'):
+        path = os.path.join(folder, 'router_stats.csv')
+        if os.path.exists(path):
+            with open(path) as f:
+                for row in csv.DictReader(f):
+                    classic.append(float(row['c_delay_ms']))
+                    l4s.append(float(row['l_delay_ms']))
+        if mode == 'fifo':
+            l4s = []  # fifo has only one queue, reported in the classic column
+    elif mode == 'dualpi2':
+        path = os.path.join(folder, 'tc_samples.txt')
+        if os.path.exists(path):
+            for line in open(path):
+                c = re.search(r'delay_c (\S+)', line)
+                l = re.search(r'delay_l (\S+)', line)
+                if c and l:
+                    classic.append(parse_tc_time(c.group(1)))
+                    l4s.append(parse_tc_time(l.group(1)))
+    return l4s, classic
+
+
+def mean(values):
+    if not values:
+        return float('nan')
+    return sum(values) / len(values)
+
+
+def ecn_check(folder):
+    # Reads ss_check.txt written during the run: was the L4S flow DCTCP with ECN?
+    path = os.path.join(folder, 'ss_check.txt')
+    if not os.path.exists(path):
+        return '?'
+    text = open(path).read()
+    if 'dctcp-reno' in text:
+        return 'NO'
+    if 'dctcp' in text and ' ecn' in text:
+        return 'yes'
+    return 'NO'
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', default='eval/results')
@@ -64,7 +122,9 @@ def main():
     columns = ['mode',
                'l4s_p50_ms', 'l4s_p95_ms', 'l4s_p99_ms', 'l4s_loss_pct',
                'classic_p50_ms', 'classic_p95_ms', 'classic_p99_ms', 'classic_loss_pct',
-               'classic_tput_mbps', 'l4s_tput_mbps', 'total_tput_mbps']
+               'classic_tput_mbps', 'l4s_tput_mbps', 'total_tput_mbps',
+               'l4s_qdelay_mean_ms', 'l4s_qdelay_p99_ms', 'classic_qdelay_mean_ms', 'classic_qdelay_p99_ms',
+               'l4s_ecn_ok']
     rows = []
 
     for mode in MODES:
@@ -75,7 +135,10 @@ def main():
         classic = read_probe(folder, 'classic')
         c_tput = read_iperf(folder, 'classic')
         l_tput = read_iperf(folder, 'l4s')
-        rows.append([mode] + list(l4s) + list(classic) + [c_tput, l_tput, c_tput + l_tput])
+        l_q, c_q = read_queue_delays(folder, mode)
+        qdelay = [mean(l_q), percentile(sorted(l_q), 99), mean(c_q), percentile(sorted(c_q), 99)]
+        rows.append([mode] + list(l4s) + list(classic) + [c_tput, l_tput, c_tput + l_tput] + qdelay
+                    + [ecn_check(folder)])
 
     if not rows:
         print('No result folders found in', args.input)
@@ -89,12 +152,18 @@ def main():
         print('%-9s | %6.1f %6.1f %6.1f %4.1f%% | %6.1f %6.1f %6.1f %4.1f%% | %5.1f / %5.1f / %5.1f' %
               (r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]))
 
+    print('\nQueue delay inside the bottleneck in ms (sampled every 100 ms; fq_codel does not report it)')
+    print('%-9s | %-19s | %-19s | %s' % ('', 'L4S queue mean/p99', 'Classic mean/p99', 'L4S flow DCTCP+ECN?'))
+    for r in rows:
+        print('%-9s | %8.2f %10.2f | %8.2f %10.2f | %s' % (r[0], r[12], r[13], r[14], r[15], r[16]))
+    print('(fifo has one queue: it is shown in the Classic column)')
+
     out_path = os.path.join(args.input, 'summary.csv')
     with open(out_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(columns)
         for r in rows:
-            writer.writerow([r[0]] + ['%.2f' % v for v in r[1:]])
+            writer.writerow([r[0]] + ['%.2f' % v for v in r[1:-1]] + [r[-1]])
     print('\nSaved', out_path)
 
 

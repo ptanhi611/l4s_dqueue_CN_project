@@ -15,6 +15,9 @@ public:
 
     bool send_frame(const uint8_t* buf, int len);
 
+    // Frames the kernel had to drop because our receive buffer was full
+    unsigned int get_kernel_drops();
+
     int get_fd() const { return fd_; }
     const uint8_t* get_mac() const { return mac_; }
 

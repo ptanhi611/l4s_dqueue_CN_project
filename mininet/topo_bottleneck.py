@@ -58,6 +58,20 @@ def setup_kernel_baseline(r0, mode):
     return True
 
 
+def check_ecn(h1, out):
+    # "ss -tin" lists h1's TCP connections with their congestion control and flags.
+    # Good L4S flow:  "dctcp" + "ecn".   Broken:  "dctcp-reno" (= ECN was not negotiated).
+    ss = h1.cmd('ss -tin dst 10.0.2.1')
+    with open(out + '/ss_check.txt', 'w') as f:
+        f.write(ss)
+    if 'dctcp-reno' in ss:
+        print('WARNING: L4S flow fell back to dctcp-reno, ECN was NOT negotiated. See %s/ss_check.txt' % out)
+    elif 'dctcp' in ss and ' ecn' in ss:
+        print('OK: L4S flow is using DCTCP with ECN')
+    else:
+        print('WARNING: could not find a DCTCP+ECN connection. See %s/ss_check.txt' % out)
+
+
 def run_experiment(net, mode, duration):
     h1, h2, r0 = net.get('h1', 'h2', 'r0')
     out = 'eval/results/' + mode
@@ -95,10 +109,22 @@ def run_experiment(net, mode, duration):
     h1.cmd('python3 eval/latency_probe.py --ecn 0 --duration %d --out %s/probe_classic.csv > %s/probe_classic.txt 2>&1 &'
            % (duration, out, out))
 
-    time.sleep(duration + 4)
+    # Kernel dualpi2 reports its own queue delays: sample them every 100 ms,
+    # so we can compare its L4S queue delay with our router's.
+    if mode == 'dualpi2':
+        r0.cmd('(while true; do tc -s qdisc show dev r0-eth1 | grep delay_c; sleep 0.1; done) > %s/tc_samples.txt 2>&1 &'
+               ' echo $! > %s/tc_loop.pid' % (out, out))
 
-    # 5. Stop everything
+    # 5. After 5 s, check that the L4S flow really uses DCTCP with ECN
+    time.sleep(5)
+    check_ecn(h1, out)
+
+    time.sleep(max(0, duration - 5) + 4)
+
+    # 6. Stop everything
     r0.cmd('pkill -INT l4s_router')
+    if mode == 'dualpi2':
+        r0.cmd('kill $(cat %s/tc_loop.pid) 2>/dev/null' % out)
     h2.cmd('pkill iperf3')
     h2.cmd('pkill -f latency_probe.py')
     time.sleep(1)
