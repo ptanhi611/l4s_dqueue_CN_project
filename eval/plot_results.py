@@ -20,15 +20,17 @@ matplotlib.use('Agg')  # no screen needed, just save PNG files
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
 
-MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'fq_codel', 'dualpi2']
-OUR_DUALQ_MODES = ['dualq_basic', 'dualq', 'dualq_qp']
+MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police', 'fq_codel', 'dualpi2']
+OUR_DUALQ_MODES = ['dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police']
 LABELS = {'fifo': 'FIFO (ours)', 'dualq_basic': 'DualQ basic (ours)', 'dualq': 'DualQ + overload (ours)',
-          'dualq_qp': 'DualQ + queue protection (ours)', 'fq_codel': 'fq_codel (kernel)',
+          'dualq_qp': 'DualQ + queue protection (ours)', 'dualq_qp_police': 'DualQ + QP + rate limit (ours)',
+          'fq_codel': 'fq_codel (kernel)',
           'dualpi2': 'dualpi2 (kernel)'}
 # One fixed color + line style per mode, the same in every graph
 COLORS = {'fifo': '#2a78d6', 'dualq': '#eb6834', 'fq_codel': '#1baf7a', 'dualpi2': '#eda100',
-          'dualq_qp': '#e87ba4', 'dualq_basic': '#008300'}
-STYLES = {'fifo': '-', 'dualq_basic': '-.', 'dualq': '-', 'dualq_qp': '-', 'fq_codel': '--', 'dualpi2': ':'}
+          'dualq_qp': '#e87ba4', 'dualq_basic': '#008300', 'dualq_qp_police': '#6250d6'}
+STYLES = {'fifo': '-', 'dualq_basic': '-.', 'dualq': '-', 'dualq_qp': '-', 'dualq_qp_police': '-',
+          'fq_codel': '--', 'dualpi2': ':'}
 FLOW_COLORS = {'classic': '#2a78d6', 'l4s': '#eb6834', 'flood': '#1baf7a'}
 ATTACK_SHADE = '#ececec'
 

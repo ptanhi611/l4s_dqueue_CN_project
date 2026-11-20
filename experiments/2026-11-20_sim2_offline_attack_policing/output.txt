@@ -1,0 +1,7 @@
+# Output of sim_attack.cpp (offline, real-time, no Mininet), 6 s per mode, first 2 s skipped
+# Same as sim1 plus mode dualq_qp_police (5 Mbps rate limit) and the share of time in overload (p_C >= 0.25)
+# Built with: g++ -std=c++17 -O2 -Iinclude experiments/2026-11-20_sim2_offline_attack_policing/sim_attack.cpp src/classifier.cpp src/dual_queue.cpp src/pi2_aqm.cpp src/scheduler.cpp src/queue_protection.cpp -o sim_attack
+dualq_basic  probe delay  259.32 ms | L queue  259.09 ms | C queue   0.01 ms | tput flood  46.2 classic   3.7 Mbps | p_C 0.000 | overload   0% of time | policed 0
+dualq        probe delay   15.32 ms | L queue   15.01 ms | C queue   0.03 ms | tput flood  42.8 classic   7.0 Mbps | p_C 0.303 | overload  99% of time | policed 0
+dualq_qp     probe delay    0.20 ms | L queue    0.06 ms | C queue  16.40 ms | tput flood  42.7 classic   7.0 Mbps | p_C 0.289 | overload 100% of time | policed 0
+dualq_qp_police probe delay    0.07 ms | L queue    0.05 ms | C queue   0.02 ms | tput flood   5.7 classic  10.0 Mbps | p_C 0.000 | overload   0% of time | policed 28237

@@ -172,6 +172,107 @@ During the attack (steady state, 2 s after the flood starts):
 
 ---
 
+## Debug 2: 2026-11-20 06:43, ECN check after the fix
+
+- **Code:** batch 6 (commit 92cf4db)
+- **Folder:** `2026-11-20_0643_ecn_debug/` (written by `--debug-ecn`)
+- **Result:**
+  - Test A (old way, `iperf3 -C dctcp`): SYN `[S]`, `dctcp-reno`. Still fails, as expected.
+  - **Test B (new way, route `congctl dctcp` to 10.0.2.2): SYN `[SEW]` → SYN-ACK `[S.E]`, ss shows `dctcp:(ce_state:0,alpha:17,ab_ecn:0,ab_tot:3282616)`.** DCTCP with ECN works.
+- **Use in report:** before/after evidence for the ECN negotiation fix.
+
+---
+
+## Run 5: 2026-11-20 06:43, normal_v2 (first run with a real L4S flow)
+
+- **Code:** batch 6, commit 92cf4db, kernel 7.0.0-43
+- **Folder:** `2026-11-20_0643_normal_v2/`
+- **Scenario / modes / duration:** normal, fifo dualq dualq_qp fq_codel dualpi2, 30 s
+- **Status:** **valid.** All modes `OK: L4S flow is using DCTCP with ECN`.
+
+| Mode | L4S probe p50/p99/max (ms) | Classic probe p50/p99 (ms) | L4S queue mean/p99 (ms) | Classic queue mean/p99 (ms) | Tput C / L / total |
+|---|---|---|---|---|---|
+| fifo | 196.7 / 259.9 / 260.2 | 196.8 / 259.9 | – | 136.9 / 239.4 (single queue) | 19.0 / 28.5 / 47.5 |
+| **dualq (ours)** | **20.3 / 21.2 / 23.7** | 34.2 / 40.5 | **0.09 / 0.70** | 10.1 / 19.8 | **23.0 / 24.5 / 47.5** |
+| dualq_qp (ours) | 20.3 / 21.2 / 21.6 | 34.4 / 40.4 | 0.10 / 0.65 | 10.4 / 19.9 | 22.0 / 25.5 / 47.5 |
+| fq_codel | 20.2 / 20.4 / 20.6 | 20.2 / 20.4 | n/a | n/a | 23.5 / 24.0 / 47.5 |
+| **dualpi2 (kernel)** | **20.4 / 21.2 / 21.6** | 34.0 / 40.8 | **0.18 / 0.83** | 11.3 / 19.7 | **21.7 / 25.7 / 47.5** |
+
+**Findings**
+1. **Main result: our router reproduces RFC 9332 DualQ Coupled AQM with a real L4S flow, matching Linux `sch_dualpi2`.**
+   - The L4S queue stays below 1 ms (mean 0.09 ms, p99 0.70 ms; kernel 0.18 / 0.83) while the DCTCP flow carries half the link.
+   - The Classic queue is held at the 15 ms target region (mean 10.1 ms; kernel 11.3 ms).
+2. **Coupling gives rate fairness.** DCTCP and cubic split the link about evenly (24.5 vs 23.0 Mbps; kernel 25.7 vs 21.7), although DCTCP sees far more congestion signals (2,737 CE marks vs 27 Classic drops). This is the p_C = (p_CL / k)² law working.
+3. **Bufferbloat baseline** reproduced again (FIFO p99 260 ms).
+4. **Queue protection: no false positives with a real DCTCP flow.** dualq_qp moved 0 packets and behaved like dualq.
+5. **No startup spikes this time** (max 23.7 ms vs 86–143 ms in Run 3). In Run 3 both bulk flows were Classic, so the Classic slow-start overshoot was larger. This supports the starvation-breaker explanation; the breaker is still tested separately.
+6. **Bulk-flow RTT: where L4S beats fq_codel.** The RTT measured by each sending TCP stack (iperf3 `mean_rtt`, computed afterwards from this run's files):
+
+   | Mode | Classic flow (cubic) | L4S flow (DCTCP) |
+   |---|---|---|
+   | fifo | 193.5 ms | 192.5 ms |
+   | **dualq (ours)** | 32.6 ms | **20.5 ms** |
+   | dualq_qp (ours) | 33.7 ms | 20.6 ms |
+   | fq_codel | 23.3 ms | **28.0 ms** |
+   | dualpi2 (kernel) | 33.6 ms | 20.6 ms |
+
+   fq_codel gives ~20 ms to the sparse probes, but the **bulk DCTCP flow itself sees 28.0 ms** there (about 8 ms of queuing). In our DualQ and the kernel's dualpi2 it sees **20.5 ms (0.5 ms of queuing) at full share of the link**. That is the L4S promise: low latency for capacity-seeking flows, not only for sparse ones. Trade-off: Classic flows see ~33 ms under DualQ (15 ms target) vs 23 ms under fq_codel.
+
+**Use in report:** headline result table (findings 1–2); validation against the kernel.
+
+---
+
+## Run 6: 2026-11-20 06:46, attack_v2 (real L4S flow + ECT(1) flood)
+
+- **Code:** same as Run 5
+- **Folder:** `2026-11-20_0646_attack_v2/`
+- **Scenario / modes / duration:** attack (60 Mbps ECT(1) UDP flood, t = 10–30 s), dualq_basic dualq dualq_qp fq_codel dualpi2, 40 s
+- **Status:** valid. All modes DCTCP + ECN OK.
+
+During the attack (steady state, 2 s after the flood starts):
+
+| Mode | L4S probe p50/p99 (ms) | L4S probe loss (whole run) | Classic probe p50/p99 (ms) | Tput Classic / L4S / flood (Mbps) |
+|---|---|---|---|---|
+| dualq_basic | 260.4 / 262.2 | 0.1% | 20.2 / 20.3 | 0.0 / 0.0 / 48.3 |
+| dualq (ours) | **35.2 / 38.0** | 11.4% | 20.2 / 21.1 | 0.4 / 0.2 / 47.7 |
+| dualq_qp (ours) | **20.2 / 22.3** | **1.0%** | 35.0 / 46.4 | 0.2 / **0.9** / 47.2 |
+| fq_codel | 20.2 / 20.4 | 0.0% | 20.2 / 20.4 | 15.7 / 15.9 / 16.2 |
+| dualpi2 (kernel) | **35.2 / 37.9** | 10.4% | 20.4 / 23.5 | 0.4 / 0.2 / 47.9 |
+
+**Findings**
+1. **Overload handling matches the kernel again, now with a real L4S flow:** L4S probe 35.2/38.0 vs 35.2/37.9 ms; flood 47.7 vs 47.9 Mbps. This repeats Run 4.
+2. **Queue protection keeps the L4S queue fast:** L4S probe 20.2/22.3 ms during the attack, L4S queue mean 0.75 ms over the run, probe loss 1.0% (vs ~11% without protection). The flood was sanctioned 20 times.
+3. **New problem: the good DCTCP flow still starves (0.9 Mbps) with queue protection.** The sanctioned flood, now in the Classic queue, keeps the PI2 controller in **overload** (p_C ≥ 0.25). Then the coupled probability p_CL = k·p' ≥ 1, so **every L4S packet is CE-marked** and DCTCP shrinks to its minimum window. Sim 2 confirms this: dualq_qp is in overload 100% of the time. Moving the flood out of the L4S queue is not enough; it must also be **limited**. → Phase 3b: rate limit for sanctioned flows (mode `dualq_qp_police`).
+4. **One false positive:** the DCTCP flow was sanctioned once (116 packets) right at attack onset. Likely cause: the flood suddenly fills the Classic queue, the 50 ms starvation breaker gives Classic strict priority, and DCTCP's backlog in the L4S queue grows past 30 KB. The same onset effect gives the ~145 ms probe spike in dualq and dualq_qp.
+5. fq_codel again shares fairly (15.7 / 15.9 / 16.2 Mbps) with ~20 ms probes. This is the bar for the policing mode.
+
+**Use in report:** overload validation (finding 1); the queue-protection latency result (finding 2); the coupling insight that motivates policing (finding 3). This is a genuine, non-obvious design lesson.
+
+---
+
+## Sim 2: 2026-11-20, offline attack simulation with policing
+
+- **Folder:** `2026-11-20_sim2_offline_attack_policing/` (same setup as Sim 1, plus `dualq_qp_police` with a 5 Mbps limit, plus the share of time in overload)
+
+| Mode | L4S probe queue delay | Classic queue | Flood / Classic tput (Mbps) | p_C | Time in overload |
+|---|---|---|---|---|---|
+| dualq_basic | 259 ms | 0.0 ms | 46.2 / 3.7 | 0.00 | 0% |
+| dualq | 15.3 ms | 0.0 ms | 42.8 / 7.0 | 0.30 | 99% |
+| dualq_qp | 0.20 ms | 16.4 ms | 42.7 / 7.0 | 0.29 | **100%** |
+| **dualq_qp_police** | **0.07 ms** | **0.02 ms** | **5.7 / 10.0** | **0.00** | **0%** |
+
+**Findings:** (1) this confirms Run 6 finding 3: with redirect-only queue protection the controller sits in overload all the time, which forces 100% L4S marking. (2) With the 5 Mbps limit the flood can no longer congest the Classic queue: no overload, p_C ≈ 0, and the Classic stream gets its full 10 Mbps. Prediction for Mininet: with `dualq_qp_police`, the DCTCP flow keeps its throughput during the attack.
+
+---
+
+## Final suite: `eval/run_final.sh` → `results/final/`
+
+- Runs normal ×3 and attack ×3 (all modes, including `dualq_qp_police`), plus one attack run with the starvation breaker off (`config/router_config_breaker_off.ini`).
+- `eval/make_final.py` builds `results/final/`: tables with mean ± std (`table_normal`, `table_attack`, `table_breaker`), error-bar figures (`fig_normal`, `fig_attack`, `fig_bulk_rtt`), copies of the repeat-1 graphs, and a README listing the source runs.
+- **After running: add the key numbers and findings here** (policing result, breaker on/off, run-to-run spread).
+
+---
+
 ## Entry template
 
 ```

@@ -11,7 +11,7 @@
 #   sudo ./eval/traffic_profile.sh attack_test attack 40
 #   sudo ./eval/traffic_profile.sh qp_only attack 40 "dualq dualq_qp"
 #
-# Modes: fifo dualq_basic dualq dualq_qp (our router) | fq_codel dualpi2 (Linux kernel)
+# Modes: fifo dualq_basic dualq dualq_qp dualq_qp_police (our router) | fq_codel dualpi2 (Linux kernel)
 
 LABEL=$1
 SCENARIO=${2:-normal}
@@ -30,7 +30,7 @@ fi
 # Default modes for each scenario
 if [ -z "$MODES" ]; then
     if [ "$SCENARIO" = "attack" ]; then
-        MODES="dualq_basic dualq dualq_qp fq_codel dualpi2"
+        MODES="dualq_basic dualq dualq_qp dualq_qp_police fq_codel dualpi2"
     else
         MODES="fifo dualq dualq_qp fq_codel dualpi2"
     fi
@@ -53,6 +53,7 @@ mkdir -p "$RUN_DIR"
     echo "Scenario: $SCENARIO | duration: $DURATION s | modes: $MODES"
     echo "Git commit: $(git -c safe.directory='*' rev-parse --short HEAD 2>/dev/null)"
     echo "Kernel: $(uname -r)"
+    echo "Router config: ${ROUTER_CONFIG:-config/router_config.ini}"
 
     make || exit 1
     rm -rf eval/results
@@ -74,7 +75,7 @@ mkdir -p "$RUN_DIR"
 
 # Archive: copy all results and graphs, plus the config used
 cp -r eval/results/* "$RUN_DIR/" 2>/dev/null
-cp config/router_config.ini "$RUN_DIR/"
+cp "${ROUTER_CONFIG:-config/router_config.ini}" "$RUN_DIR/router_config.ini"
 touch eval/results/.archived
 
 # Results were written as root; give them back to the normal user

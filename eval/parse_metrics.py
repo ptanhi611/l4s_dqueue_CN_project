@@ -11,8 +11,8 @@ import json
 import os
 import re
 
-MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'fq_codel', 'dualpi2']
-OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp']
+MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police', 'fq_codel', 'dualpi2']
+OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police']
 
 
 def percentile(sorted_values, p):
@@ -55,6 +55,22 @@ def read_iperf(folder, name):
     except (ValueError, KeyError):
         print('  (could not read %s - check the file for an iperf3 error)' % path)
         return float('nan')
+
+
+def read_iperf_rtt(folder, name):
+    # Mean RTT (ms) that the bulk TCP flow itself saw, measured by the sender's kernel,
+    # plus the congestion control it really used. This is the key L4S metric:
+    # an L4S flow should keep a low RTT while using its full share of the link.
+    path = os.path.join(folder, 'iperf_%s.json' % name)
+    if not os.path.exists(path):
+        return float('nan'), '?'
+    try:
+        data = json.load(open(path))
+        rtt_ms = data['end']['streams'][0]['sender']['mean_rtt'] / 1000.0
+        cc = data['end'].get('sender_tcp_congestion', '?')
+        return rtt_ms, cc
+    except (ValueError, KeyError, IndexError):
+        return float('nan'), '?'
 
 
 def parse_tc_time(text):
@@ -187,11 +203,12 @@ def main():
                'classic_p50_ms', 'classic_p95_ms', 'classic_p99_ms', 'classic_loss_pct',
                'classic_tput_mbps', 'l4s_tput_mbps', 'total_tput_mbps',
                'l4s_qdelay_mean_ms', 'l4s_qdelay_p99_ms', 'classic_qdelay_mean_ms', 'classic_qdelay_p99_ms',
-               'l4s_ecn_ok',
+               'l4s_ecn_ok', 'classic_flow_rtt_ms', 'l4s_flow_rtt_ms',
                'atk_l4s_p50_ms', 'atk_l4s_p99_ms', 'atk_classic_p50_ms', 'atk_classic_p99_ms',
                'atk_classic_tput_mbps', 'atk_l4s_tput_mbps', 'atk_flood_tput_mbps']
     rows = []
     attacks = {}
+    flow_rtts = {}
 
     for mode in MODES:
         folder = os.path.join(args.input, mode)
@@ -205,6 +222,7 @@ def main():
         qdelay = [mean(l_q), percentile(sorted(l_q), 99), mean(c_q), percentile(sorted(c_q), 99)]
         rows.append([mode] + list(l4s) + list(classic) + [c_tput, l_tput, c_tput + l_tput] + qdelay
                     + [ecn_check(folder)])
+        flow_rtts[mode] = (read_iperf_rtt(folder, 'classic'), read_iperf_rtt(folder, 'l4s'))
         attacks[mode] = attack_metrics(folder)
 
     if not rows:
@@ -213,25 +231,31 @@ def main():
 
     # Print a readable table
     print('Probe RTT in ms (base RTT is ~20 ms). Throughput in Mbps (link is 50 Mbps).\n')
-    print('%-11s | %-26s | %-26s | %-22s' % ('', 'L4S probe  p50/p95/p99 loss', 'Classic probe p50/p95/p99 loss',
+    print('%-15s | %-26s | %-26s | %-22s' % ('', 'L4S probe  p50/p95/p99 loss', 'Classic probe p50/p95/p99 loss',
                                            'Throughput C / L / total'))
     for r in rows:
-        print('%-11s | %6.1f %6.1f %6.1f %4.1f%% | %6.1f %6.1f %6.1f %4.1f%% | %5.1f / %5.1f / %5.1f' %
+        print('%-15s | %6.1f %6.1f %6.1f %4.1f%% | %6.1f %6.1f %6.1f %4.1f%% | %5.1f / %5.1f / %5.1f' %
               (r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]))
 
     print('\nQueue delay inside the bottleneck in ms (sampled every 100 ms; fq_codel does not report it)')
-    print('%-11s | %-19s | %-19s | %s' % ('', 'L4S queue mean/p99', 'Classic mean/p99', 'L4S flow DCTCP+ECN?'))
+    print('%-15s | %-19s | %-19s | %s' % ('', 'L4S queue mean/p99', 'Classic mean/p99', 'L4S flow DCTCP+ECN?'))
     for r in rows:
-        print('%-11s | %8.2f %10.2f | %8.2f %10.2f | %s' % (r[0], r[12], r[13], r[14], r[15], r[16]))
+        print('%-15s | %8.2f %10.2f | %8.2f %10.2f | %s' % (r[0], r[12], r[13], r[14], r[15], r[16]))
     print('(fifo has one queue: it is shown in the Classic column)')
+
+    print('\nRTT seen by the bulk TCP flows themselves (iperf3 sender mean, whole run; base RTT ~20 ms)')
+    print('%-15s | %-24s | %s' % ('', 'Classic flow RTT (cc)', 'L4S flow RTT (cc)'))
+    for r in rows:
+        (c_rtt, c_cc), (l_rtt, l_cc) = flow_rtts[r[0]]
+        print('%-15s | %8.1f ms (%-8s)    | %8.1f ms (%s)' % (r[0], c_rtt, c_cc, l_rtt, l_cc))
 
     if any(attacks.values()):
         print('\nDURING THE ATTACK (ECT(1) UDP flood, steady state from 2 s after it starts)')
-        print('%-11s | %-17s | %-17s | %s' % ('', 'L4S probe p50/p99', 'Classic p50/p99', 'Tput Classic / L4S / flood (Mbps)'))
+        print('%-15s | %-17s | %-17s | %s' % ('', 'L4S probe p50/p99', 'Classic p50/p99', 'Tput Classic / L4S / flood (Mbps)'))
         for mode in [r[0] for r in rows]:
             a = attacks[mode]
             if a:
-                print('%-11s | %7.1f %8.1f | %7.1f %8.1f | %5.1f / %5.1f / %5.1f' % (
+                print('%-15s | %7.1f %8.1f | %7.1f %8.1f | %5.1f / %5.1f / %5.1f' % (
                     mode, a['l4s_probe'][0], a['l4s_probe'][1], a['classic_probe'][0], a['classic_probe'][1],
                     a['classic_tput'], a['l4s_tput'], a['flood_tput']))
 
@@ -244,7 +268,9 @@ def main():
             atk = []
             if a:
                 atk = list(a['l4s_probe']) + list(a['classic_probe']) + [a['classic_tput'], a['l4s_tput'], a['flood_tput']]
-            writer.writerow([r[0]] + ['%.2f' % v for v in r[1:-1]] + [r[-1]] + ['%.2f' % v for v in atk])
+            (c_rtt, _), (l_rtt, _) = flow_rtts[r[0]]
+            writer.writerow([r[0]] + ['%.2f' % v for v in r[1:-1]] + [r[-1], '%.2f' % c_rtt, '%.2f' % l_rtt]
+                            + ['%.2f' % v for v in atk])
     print('\nSaved', out_path)
 
 

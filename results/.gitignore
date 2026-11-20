@@ -1,0 +1,4 @@
+# Keep the final tables and figures in git, for the report.
+# (The root .gitignore ignores *.csv and *.png everywhere; this re-includes them here.)
+!*.csv
+!*.png

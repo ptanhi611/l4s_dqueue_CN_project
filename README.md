@@ -61,34 +61,32 @@ The repository is organized into distinct modules across development, configurat
 
 ```text
 l4s-dualq-router/
-├── Makefile                     # C++ compilation flags (-O3, -Wall, pthreads)
-├── README.md                    # System documentation and execution guidelines
-├── requirements.txt             # Python libraries for evaluation & telemetry
-├── .gitignore                   # Excludes build artifacts, logs, and CSV outputs
+├── Makefile                     # builds build/l4s_router (g++ -O2, C++17)
+├── README.md
 ├── config/
-│   └── router_config.ini        # Queue capacities, link limits, target delays
-├── include/                     # C++ Header declarations
-│   ├── classifier.hpp           # Layer 2/3 header parsers and ECN bit extraction
-│   ├── dual_queue.hpp           # Memory buffers and sojourn timestamping structs
-│   ├── pi2_aqm.hpp              # RFC 9332 coupled probability math engine
-│   ├── raw_socket.hpp           # AF_PACKET promiscuous socket binding utilities
-│   └── scheduler.hpp            # Modified Deficit Round Robin dispatcher
-├── src/                         # C++ Source implementations
-│   ├── main.cpp                 # Forwarder lifecycle, signal handling, and pipeline
-│   ├── classifier.cpp           # IP/TCP/UDP header parsing logic
-│   ├── dual_queue.cpp           # Packet enqueue, ring buffers, and drop routines
-│   ├── pi2_aqm.cpp              # PI controller periodic sampling & coupled marking
-│   ├── raw_socket.cpp           # Interface capture and frame transmission
-│   └── scheduler.cpp            # Dual-queue egress dispatcher
-├── mininet/                     # Emulated network environment
-│   ├── topo_bottleneck.py       # Mininet 3-node dual-subnet bottleneck topology
-│   └── configure_routes.sh      # Disables OS kernel IP forwarding; binds routes
-└── eval/                        # Benchmarking & performance evaluation
-    ├── traffic_profile.sh       # Orchestrates iperf3 bulk load and latency probes
-    ├── latency_probe.py         # Sub-millisecond UDP latency measurement script
-    ├── parse_metrics.py         # Computes P50, P95, P99 RTT percentiles and jitter
-    ├── plot_results.py          # Renders latency CDFs and throughput time series
-    └── results/                 # Directory holding benchmark CSVs and PNG graphs
+│   ├── router_config.ini        # rate, buffer, PI2 (RFC 9332 defaults), scheduler, queue protection
+│   └── router_config_breaker_off.ini  # same, starvation breaker off (used by the final suite)
+├── include/ , src/              # C++ router (one .hpp/.cpp pair per module)
+│   ├── raw_socket               # AF_PACKET sockets on r0-eth0 / r0-eth1
+│   ├── classifier               # IPv4 parsing, ECN, flow id, CE marking, TTL + checksum
+│   ├── dual_queue               # Classic + L4S queues, shared byte limit, sojourn times
+│   ├── pi2_aqm                  # coupled PI2: p', p_C = p'^2, p_CL = k*p', L4S step marking
+│   ├── scheduler                # L4S priority with byte quantum + starvation breaker
+│   ├── queue_protection         # our addition: per-flow L4S backlog check, sanction, rate limit
+│   └── main.cpp                 # modes, 50 Mbps pacing, overload handling, stats CSV
+├── mininet/
+│   ├── topo_bottleneck.py       # h1 - r0 - h2 topology, automatic experiments, --debug-ecn
+│   └── configure_routes.sh      # offloads off, forwarding off, 20 ms delay, DCTCP route, ECT(1) rule
+├── eval/
+│   ├── traffic_profile.sh       # one experiment set (several modes) + archive to experiments/
+│   ├── run_final.sh             # FINAL suite: normal x3, attack x3, breaker off -> results/final/
+│   ├── make_final.py            # mean +- std tables and figures for the report
+│   ├── latency_probe.py         # UDP RTT probe with chosen ECN codepoint
+│   ├── parse_metrics.py         # summary tables of one run
+│   ├── plot_results.py          # graphs of one run
+│   └── live_view.py             # live terminal dashboard for demos
+├── experiments/                 # every run ever made (raw data, graphs, console) + LOG.md notebook
+└── results/final/               # final tables and figures used in the report
 ```
 
 ---
@@ -157,14 +155,15 @@ draws the graphs, and archives everything in `experiments/<date_time>_<label>/`:
 sudo ./eval/traffic_profile.sh <label> [normal|attack] [duration_s] ["mode list"]
 
 sudo ./eval/traffic_profile.sh normal_check                    # fifo dualq dualq_qp fq_codel dualpi2
-sudo ./eval/traffic_profile.sh attack_check attack 40          # dualq_basic dualq dualq_qp fq_codel dualpi2
+sudo ./eval/traffic_profile.sh attack_check attack 40          # dualq_basic dualq dualq_qp dualq_qp_police fq_codel dualpi2
 ```
 | Mode | What it is |
 |---|---|
 | `fifo` | our router, one plain queue (bufferbloat baseline) |
 | `dualq_basic` | our router, DualQ + coupled PI2, no overload handling |
 | `dualq` | our router, DualQ + coupled PI2 + RFC 9332 overload handling |
-| `dualq_qp` | `dualq` + our queue protection for the L4S queue |
+| `dualq_qp` | `dualq` + our queue protection for the L4S queue (misbehaving flows moved to Classic) |
+| `dualq_qp_police` | `dualq_qp` + rate limit for sanctioned flows (`qp_police_rate_mbps`) |
 | `fq_codel` | Linux kernel fq_codel (baseline) |
 | `dualpi2` | Linux kernel `sch_dualpi2` (reference RFC 9332 implementation, kernel 6.17+) |
 
@@ -183,6 +182,28 @@ python3 eval/parse_metrics.py --input experiments/<run_folder>
 ```
 **After every run, add an entry to `experiments/LOG.md`** (what changed, what we saw, valid or not).
 
+### Step 6: Final Results for the Report (one command)
+```bash
+make
+sudo python3 mininet/topo_bottleneck.py --debug-ecn    # 1 min sanity check: test B must say "DCTCP with ECN is working"
+sudo ./eval/run_final.sh                               # ~35 min: normal x3, attack x3, breaker-off run
+```
+Everything for the report then lives in **`results/final/`** (see its `README.md`):
+`table_normal.md`, `table_attack.md`, `table_breaker.md` (mean ± std over the repeats),
+`fig_normal.png`, `fig_attack.png`, `fig_bulk_rtt.png`, and copies of the repeat-1 time-series graphs.
+The tables can be rebuilt at any time with `python3 eval/make_final.py`.
+
+### Step 7: Live Demo
+Two terminals:
+```bash
+# Terminal 1: run the attack scenario with our final router
+sudo ./eval/traffic_profile.sh demo attack 40 "dualq_qp_police"
+# Terminal 2: live dashboard (queue delays, p', marks, drops, throughput)
+python3 eval/live_view.py eval/results/dualq_qp_police/router_stats.csv
+```
+Good demo order: `fifo` (bufferbloat) → `dualq` (L4S ~1 ms queue) → attack with `dualq`
+(L4S delay goes up to ~15 ms) → attack with `dualq_qp_police` (L4S delay stays low).
+
 ---
 
 ## 6. Team Division & Task Ownership
@@ -195,32 +216,21 @@ python3 eval/parse_metrics.py --input experiments/<run_folder>
 
 ---
 
-## 7. 8-Week Project Milestone Timeline
+## 7. Project Status
 
-```text
-Week 1–2: Checkpoint Sprint (Current)
-├── Configure Mininet dual-subnet bottleneck (50 Mbps, 20 ms delay)
-├── Verify baseline bufferbloat (DropTail RTT spikes > 150 ms)
-├── Implement raw socket ECN classifier proof-of-concept
-└── Checkpoint 1 Presentation: Deliver block diagram, flowchart, and working packet parser
+| Milestone | Status |
+|---|---|
+| Mininet bottleneck topology, bufferbloat baseline (FIFO p99 ≈ 260 ms) | Done |
+| Raw-socket forwarder, ECN classifier, CE marking + checksum, 50 Mbps pacing | Done |
+| Coupled PI2 AQM + scheduler (RFC 9332), overload handling | Done; matches Linux `sch_dualpi2` |
+| Real L4S traffic (DCTCP with ECN, ECT(1)) | Done (per-route DCTCP, see `experiments/LOG.md` Debug 1–2) |
+| Baselines: our FIFO, kernel fq_codel, kernel dualpi2 | Done |
+| Our contribution: L4S queue protection (+ rate limit for sanctioned flows) | Done; evaluated under an ECT(1) flood |
+| Final suite with repeats, tables and figures (`results/final/`) | `sudo ./eval/run_final.sh` |
+| Report and live demo | In progress |
 
-Week 3–4: Core Forwarding & Ring Buffer Engine
-├── Implement thread-safe dual ring buffers (Classic deep queue vs. L4S shallow queue)
-├── Establish userspace Layer-3 packet forwarding across r0-eth0 and r0-eth1
-└── Verify wire-speed packet processing without userspace memory exhaustion
-
-Week 5–6: RFC 9332 Coupled PI2 Controller & Scheduler
-├── Integrate discrete-time PI controller loop (16 ms sampling period)
-├── Implement mathematical coupling: p_C = (p_L / 2)^2
-├── Implement dynamic CE marking (ECN bit rewrite to 11 and checksum recalculation)
-└── Add starvation protection scheduler to safeguard Classic bandwidth share
-
-Week 7–8: Benchmarking, Validation & Final Evaluation
-├── Run automated traffic matrices across varying loads (10 Mbps to 100 Mbps)
-├── Benchmark against Linux kernel DropTail and FQ-CoDel baselines
-├── Generate P50, P95, and P99 latency CDFs and throughput graphs
-└── Final Project Evaluation & Live Demonstration
-```
+The full history of every experiment, including failed runs and how each bug was found, is in
+`experiments/LOG.md`.
 
 ---
 

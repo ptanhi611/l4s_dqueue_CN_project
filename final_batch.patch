@@ -1,0 +1,1389 @@
+diff --git a/README.md b/README.md
+index 6e063d5..2ad7df9 100644
+--- a/README.md
++++ b/README.md
+@@ -61,34 +61,32 @@ The repository is organized into distinct modules across development, configurat
+ 
+ ```text
+ l4s-dualq-router/
+-├── Makefile                     # C++ compilation flags (-O3, -Wall, pthreads)
+-├── README.md                    # System documentation and execution guidelines
+-├── requirements.txt             # Python libraries for evaluation & telemetry
+-├── .gitignore                   # Excludes build artifacts, logs, and CSV outputs
++├── Makefile                     # builds build/l4s_router (g++ -O2, C++17)
++├── README.md
+ ├── config/
+-│   └── router_config.ini        # Queue capacities, link limits, target delays
+-├── include/                     # C++ Header declarations
+-│   ├── classifier.hpp           # Layer 2/3 header parsers and ECN bit extraction
+-│   ├── dual_queue.hpp           # Memory buffers and sojourn timestamping structs
+-│   ├── pi2_aqm.hpp              # RFC 9332 coupled probability math engine
+-│   ├── raw_socket.hpp           # AF_PACKET promiscuous socket binding utilities
+-│   └── scheduler.hpp            # Modified Deficit Round Robin dispatcher
+-├── src/                         # C++ Source implementations
+-│   ├── main.cpp                 # Forwarder lifecycle, signal handling, and pipeline
+-│   ├── classifier.cpp           # IP/TCP/UDP header parsing logic
+-│   ├── dual_queue.cpp           # Packet enqueue, ring buffers, and drop routines
+-│   ├── pi2_aqm.cpp              # PI controller periodic sampling & coupled marking
+-│   ├── raw_socket.cpp           # Interface capture and frame transmission
+-│   └── scheduler.cpp            # Dual-queue egress dispatcher
+-├── mininet/                     # Emulated network environment
+-│   ├── topo_bottleneck.py       # Mininet 3-node dual-subnet bottleneck topology
+-│   └── configure_routes.sh      # Disables OS kernel IP forwarding; binds routes
+-└── eval/                        # Benchmarking & performance evaluation
+-    ├── traffic_profile.sh       # Orchestrates iperf3 bulk load and latency probes
+-    ├── latency_probe.py         # Sub-millisecond UDP latency measurement script
+-    ├── parse_metrics.py         # Computes P50, P95, P99 RTT percentiles and jitter
+-    ├── plot_results.py          # Renders latency CDFs and throughput time series
+-    └── results/                 # Directory holding benchmark CSVs and PNG graphs
++│   ├── router_config.ini        # rate, buffer, PI2 (RFC 9332 defaults), scheduler, queue protection
++│   └── router_config_breaker_off.ini  # same, starvation breaker off (used by the final suite)
++├── include/ , src/              # C++ router (one .hpp/.cpp pair per module)
++│   ├── raw_socket               # AF_PACKET sockets on r0-eth0 / r0-eth1
++│   ├── classifier               # IPv4 parsing, ECN, flow id, CE marking, TTL + checksum
++│   ├── dual_queue               # Classic + L4S queues, shared byte limit, sojourn times
++│   ├── pi2_aqm                  # coupled PI2: p', p_C = p'^2, p_CL = k*p', L4S step marking
++│   ├── scheduler                # L4S priority with byte quantum + starvation breaker
++│   ├── queue_protection         # our addition: per-flow L4S backlog check, sanction, rate limit
++│   └── main.cpp                 # modes, 50 Mbps pacing, overload handling, stats CSV
++├── mininet/
++│   ├── topo_bottleneck.py       # h1 - r0 - h2 topology, automatic experiments, --debug-ecn
++│   └── configure_routes.sh      # offloads off, forwarding off, 20 ms delay, DCTCP route, ECT(1) rule
++├── eval/
++│   ├── traffic_profile.sh       # one experiment set (several modes) + archive to experiments/
++│   ├── run_final.sh             # FINAL suite: normal x3, attack x3, breaker off -> results/final/
++│   ├── make_final.py            # mean +- std tables and figures for the report
++│   ├── latency_probe.py         # UDP RTT probe with chosen ECN codepoint
++│   ├── parse_metrics.py         # summary tables of one run
++│   ├── plot_results.py          # graphs of one run
++│   └── live_view.py             # live terminal dashboard for demos
++├── experiments/                 # every run ever made (raw data, graphs, console) + LOG.md notebook
++└── results/final/               # final tables and figures used in the report
+ ```
+ 
+ ---
+@@ -157,14 +155,15 @@ draws the graphs, and archives everything in `experiments/<date_time>_<label>/`:
+ sudo ./eval/traffic_profile.sh <label> [normal|attack] [duration_s] ["mode list"]
+ 
+ sudo ./eval/traffic_profile.sh normal_check                    # fifo dualq dualq_qp fq_codel dualpi2
+-sudo ./eval/traffic_profile.sh attack_check attack 40          # dualq_basic dualq dualq_qp fq_codel dualpi2
++sudo ./eval/traffic_profile.sh attack_check attack 40          # dualq_basic dualq dualq_qp dualq_qp_police fq_codel dualpi2
+ ```
+ | Mode | What it is |
+ |---|---|
+ | `fifo` | our router, one plain queue (bufferbloat baseline) |
+ | `dualq_basic` | our router, DualQ + coupled PI2, no overload handling |
+ | `dualq` | our router, DualQ + coupled PI2 + RFC 9332 overload handling |
+-| `dualq_qp` | `dualq` + our queue protection for the L4S queue |
++| `dualq_qp` | `dualq` + our queue protection for the L4S queue (misbehaving flows moved to Classic) |
++| `dualq_qp_police` | `dualq_qp` + rate limit for sanctioned flows (`qp_police_rate_mbps`) |
+ | `fq_codel` | Linux kernel fq_codel (baseline) |
+ | `dualpi2` | Linux kernel `sch_dualpi2` (reference RFC 9332 implementation, kernel 6.17+) |
+ 
+@@ -183,6 +182,28 @@ python3 eval/parse_metrics.py --input experiments/<run_folder>
+ ```
+ **After every run, add an entry to `experiments/LOG.md`** (what changed, what we saw, valid or not).
+ 
++### Step 6: Final Results for the Report (one command)
++```bash
++make
++sudo python3 mininet/topo_bottleneck.py --debug-ecn    # 1 min sanity check: test B must say "DCTCP with ECN is working"
++sudo ./eval/run_final.sh                               # ~35 min: normal x3, attack x3, breaker-off run
++```
++Everything for the report then lives in **`results/final/`** (see its `README.md`):
++`table_normal.md`, `table_attack.md`, `table_breaker.md` (mean ± std over the repeats),
++`fig_normal.png`, `fig_attack.png`, `fig_bulk_rtt.png`, and copies of the repeat-1 time-series graphs.
++The tables can be rebuilt at any time with `python3 eval/make_final.py`.
++
++### Step 7: Live Demo
++Two terminals:
++```bash
++# Terminal 1: run the attack scenario with our final router
++sudo ./eval/traffic_profile.sh demo attack 40 "dualq_qp_police"
++# Terminal 2: live dashboard (queue delays, p', marks, drops, throughput)
++python3 eval/live_view.py eval/results/dualq_qp_police/router_stats.csv
++```
++Good demo order: `fifo` (bufferbloat) → `dualq` (L4S ~1 ms queue) → attack with `dualq`
++(L4S delay goes up to ~15 ms) → attack with `dualq_qp_police` (L4S delay stays low).
++
+ ---
+ 
+ ## 6. Team Division & Task Ownership
+@@ -195,32 +216,21 @@ python3 eval/parse_metrics.py --input experiments/<run_folder>
+ 
+ ---
+ 
+-## 7. 8-Week Project Milestone Timeline
++## 7. Project Status
+ 
+-```text
+-Week 1–2: Checkpoint Sprint (Current)
+-├── Configure Mininet dual-subnet bottleneck (50 Mbps, 20 ms delay)
+-├── Verify baseline bufferbloat (DropTail RTT spikes > 150 ms)
+-├── Implement raw socket ECN classifier proof-of-concept
+-└── Checkpoint 1 Presentation: Deliver block diagram, flowchart, and working packet parser
+-
+-Week 3–4: Core Forwarding & Ring Buffer Engine
+-├── Implement thread-safe dual ring buffers (Classic deep queue vs. L4S shallow queue)
+-├── Establish userspace Layer-3 packet forwarding across r0-eth0 and r0-eth1
+-└── Verify wire-speed packet processing without userspace memory exhaustion
+-
+-Week 5–6: RFC 9332 Coupled PI2 Controller & Scheduler
+-├── Integrate discrete-time PI controller loop (16 ms sampling period)
+-├── Implement mathematical coupling: p_C = (p_L / 2)^2
+-├── Implement dynamic CE marking (ECN bit rewrite to 11 and checksum recalculation)
+-└── Add starvation protection scheduler to safeguard Classic bandwidth share
+-
+-Week 7–8: Benchmarking, Validation & Final Evaluation
+-├── Run automated traffic matrices across varying loads (10 Mbps to 100 Mbps)
+-├── Benchmark against Linux kernel DropTail and FQ-CoDel baselines
+-├── Generate P50, P95, and P99 latency CDFs and throughput graphs
+-└── Final Project Evaluation & Live Demonstration
+-```
++| Milestone | Status |
++|---|---|
++| Mininet bottleneck topology, bufferbloat baseline (FIFO p99 ≈ 260 ms) | Done |
++| Raw-socket forwarder, ECN classifier, CE marking + checksum, 50 Mbps pacing | Done |
++| Coupled PI2 AQM + scheduler (RFC 9332), overload handling | Done; matches Linux `sch_dualpi2` |
++| Real L4S traffic (DCTCP with ECN, ECT(1)) | Done (per-route DCTCP, see `experiments/LOG.md` Debug 1–2) |
++| Baselines: our FIFO, kernel fq_codel, kernel dualpi2 | Done |
++| Our contribution: L4S queue protection (+ rate limit for sanctioned flows) | Done; evaluated under an ECT(1) flood |
++| Final suite with repeats, tables and figures (`results/final/`) | `sudo ./eval/run_final.sh` |
++| Report and live demo | In progress |
++
++The full history of every experiment, including failed runs and how each bug was found, is in
++`experiments/LOG.md`.
+ 
+ ---
+ 
+diff --git a/config/router_config.ini b/config/router_config.ini
+index ea290d4..a8e21ee 100644
+--- a/config/router_config.ini
++++ b/config/router_config.ini
+@@ -1,5 +1,5 @@
+ [router]
+-mode = dualq                  # fifo | dualq_basic | dualq (with RFC overload handling) | dualq_qp (+ queue protection)
++mode = dualq                  # fifo | dualq_basic | dualq (+ RFC overload) | dualq_qp (+ queue protection) | dualq_qp_police (+ rate limit)
+ rate_mbps = 50.0              # bottleneck rate, enforced inside our router (not by tc)
+ queue_limit_bytes = 1500000   # shared buffer, ~240 ms at 50 Mbps (deep, to show bufferbloat in fifo)
+ stats_file = eval/results/router_stats.csv
+@@ -25,6 +25,7 @@ k_factor = 2.0
+ l_quantum_bytes = 4500
+ classic_max_wait_ms = 50.0    # was 20; must be well above target_c_ms (15 ms), else it fires all the time
+ 
+-[queue_protection]               # only used in mode dualq_qp
++[queue_protection]               # only used in modes dualq_qp and dualq_qp_police
+ qp_max_flow_bytes = 30000     # one flow may hold at most this much of the L4S queue (~5 ms at 50 Mbps)
+ qp_sanction_ms = 1000         # a flow that goes over is sent to the Classic queue for this long
++qp_police_rate_mbps = 5        # dualq_qp_police: a sanctioned flow may send at most this much (10% of the link)
+diff --git a/config/router_config_breaker_off.ini b/config/router_config_breaker_off.ini
+new file mode 100644
+index 0000000..631e2c3
+--- /dev/null
++++ b/config/router_config_breaker_off.ini
+@@ -0,0 +1,33 @@
++# Same as router_config.ini, except the scheduler starvation breaker is switched off.
++# Used by eval/run_final.sh to test whether the breaker causes the L4S latency spikes.
++[router]
++mode = dualq                  # fifo | dualq_basic | dualq (+ RFC overload) | dualq_qp (+ queue protection) | dualq_qp_police (+ rate limit)
++rate_mbps = 50.0              # bottleneck rate, enforced inside our router (not by tc)
++queue_limit_bytes = 1500000   # shared buffer, ~240 ms at 50 Mbps (deep, to show bufferbloat in fifo)
++stats_file = eval/results/router_stats.csv
++stats_interval_ms = 100
++
++[network]
++in_if = r0-eth0               # towards h1 (sender)
++out_if = r0-eth1              # towards h2 (receiver)
++h1_ip = 10.0.1.1
++h2_ip = 10.0.2.1
++h1_mac = 00:00:00:00:01:01    # fixed in mininet/topo_bottleneck.py
++h2_mac = 00:00:00:00:02:01
++
++[aqm]
++target_c_ms = 15.0
++target_l_ms = 1.0
++time_update_ms = 16.0
++alpha = 0.16
++beta = 3.20
++k_factor = 2.0
++
++[scheduler]
++l_quantum_bytes = 4500
++classic_max_wait_ms = 1000.0  # breaker effectively OFF (the 4500 B quantum still guarantees Classic service)
++
++[queue_protection]               # only used in modes dualq_qp and dualq_qp_police
++qp_max_flow_bytes = 30000     # one flow may hold at most this much of the L4S queue (~5 ms at 50 Mbps)
++qp_sanction_ms = 1000         # a flow that goes over is sent to the Classic queue for this long
++qp_police_rate_mbps = 5        # dualq_qp_police: a sanctioned flow may send at most this much (10% of the link)
+diff --git a/eval/live_view.py b/eval/live_view.py
+new file mode 100644
+index 0000000..4054f74
+--- /dev/null
++++ b/eval/live_view.py
+@@ -0,0 +1,90 @@
++#!/usr/bin/env python3
++# Live view of the router for demos: reads the router's stats file while an
++# experiment runs and redraws a small text dashboard every 0.5 s.
++#
++# Terminal 1:  sudo ./eval/traffic_profile.sh demo attack 40 "dualq_qp_police"
++# Terminal 2:  python3 eval/live_view.py eval/results/dualq_qp_police/router_stats.csv
++#
++# Stop with Ctrl+C.
++
++import csv
++import os
++import sys
++import time
++
++BAR_WIDTH = 50  # characters; 1 character = 1 ms of queue delay
++
++
++def bar(value_ms):
++    n = int(value_ms)
++    if n > BAR_WIDTH:
++        return '#' * BAR_WIDTH + '>'
++    return '#' * n
++
++
++def read_last_two(path):
++    # Returns the last two data rows of the CSV as dicts (or fewer if the file is new)
++    with open(path) as f:
++        rows = list(csv.DictReader(f))
++    return rows[-2:]
++
++
++def main():
++    if len(sys.argv) < 2:
++        print('Usage: python3 eval/live_view.py <router_stats.csv>')
++        return
++    path = sys.argv[1]
++
++    print('Waiting for', path, '...')
++    while True:
++        try:
++            if not os.path.exists(path):
++                time.sleep(0.5)
++                continue
++            rows = read_last_two(path)
++            if len(rows) < 2:
++                time.sleep(0.5)
++                continue
++            prev, last = rows[0], rows[1]
++
++            dt = float(last['time_s']) - float(prev['time_s'])
++            mbps = (float(last['sent_bytes']) - float(prev['sent_bytes'])) * 8 / dt / 1e6 if dt > 0 else 0
++            c_delay = float(last['c_delay_ms'])
++            l_delay = float(last['l_delay_ms'])
++            overload = last.get('overload', '0') == '1'
++
++            lines = []
++            lines.append('L4S DualQ router - live view        (Ctrl+C to stop)')
++            lines.append('file: %s' % path)
++            lines.append('')
++            lines.append('time %7.1f s        output %5.1f Mbps (link 50)' % (float(last['time_s']), mbps))
++            lines.append('')
++            lines.append('Queue delay (1 # = 1 ms)')
++            lines.append('  L4S     %7.2f ms |%s' % (l_delay, bar(l_delay)))
++            lines.append('  Classic %7.2f ms |%s' % (c_delay, bar(c_delay)))
++            lines.append('')
++            lines.append("PI2:  p' = %.3f   p_C (Classic drop) = %.3f   p_CL (L4S mark) = %.3f   %s" % (
++                float(last['p_prime']), float(last['p_c']), float(last['p_l']),
++                'OVERLOAD' if overload else ''))
++            lines.append('')
++            lines.append('Counters since start:')
++            lines.append('  L4S CE marks %-9s Classic CE marks %-9s AQM drops %-9s tail drops %s' % (
++                last['l_marks'], last['c_marks'], last['aqm_drops'], last['tail_drops']))
++            if 'qp_redirects' in last:
++                lines.append('  L4S overload drops %-9s queue protection moved %s packets to Classic' % (
++                    last['l4s_drops'], last['qp_redirects']))
++
++            # Clear the screen and draw
++            sys.stdout.write('\033[2J\033[H' + '\n'.join(lines) + '\n')
++            sys.stdout.flush()
++            time.sleep(0.5)
++        except KeyboardInterrupt:
++            print()
++            return
++        except (OSError, ValueError, KeyError, ZeroDivisionError):
++            # File being rewritten or a half-written line: just try again
++            time.sleep(0.5)
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/eval/make_final.py b/eval/make_final.py
+new file mode 100644
+index 0000000..16d471a
+--- /dev/null
++++ b/eval/make_final.py
+@@ -0,0 +1,368 @@
++#!/usr/bin/env python3
++# Builds results/final/ for the report from the FINAL runs in experiments/:
++#   experiments/*_final_normal_r1, _r2, ...   (normal scenario, repeated)
++#   experiments/*_final_attack_r1, _r2, ...   (attack scenario, repeated)
++#   experiments/*_final_breaker_off           (attack, starvation breaker switched off)
++#
++# Output in results/final/:
++#   table_normal.md / .csv     mean +- std over the repeats, per mode
++#   table_attack.md / .csv     the same, measured during the attack
++#   table_breaker.md           breaker ON (final_attack runs) vs OFF
++#   fig_normal.png             probe p99 RTT and throughput split, with error bars
++#   fig_bulk_rtt.png           RTT seen by the bulk TCP flows themselves
++#   fig_attack.png             L4S probe p99 and throughputs during the attack
++#   run1_*.png                 the per-run graphs of repeat 1 (time series, CDFs, internals)
++#   README.md                  what every file is and where it comes from
++#
++# Usage: python3 eval/make_final.py   (from the repo root, after eval/run_final.sh)
++
++import csv
++import glob
++import math
++import os
++import shutil
++
++import matplotlib
++matplotlib.use('Agg')
++import matplotlib.pyplot as plt
++from matplotlib.ticker import ScalarFormatter
++
++# Same folder as this script, so these imports work when run as python3 eval/make_final.py
++from parse_metrics import (read_probe, read_iperf, read_iperf_rtt, read_queue_delays,
++                           attack_metrics, ecn_check, percentile)
++
++OUT = 'results/final'
++NORMAL_MODES = ['fifo', 'dualq', 'dualq_qp', 'dualq_qp_police', 'fq_codel', 'dualpi2']
++ATTACK_MODES = ['dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police', 'fq_codel', 'dualpi2']
++LABELS = {'fifo': 'FIFO', 'dualq_basic': 'DualQ basic', 'dualq': 'DualQ',
++          'dualq_qp': 'DualQ+QP', 'dualq_qp_police': 'DualQ+QP+limit',
++          'fq_codel': 'fq_codel\n(kernel)', 'dualpi2': 'dualpi2\n(kernel)'}
++COLORS = {'classic': '#2a78d6', 'l4s': '#eb6834', 'flood': '#1baf7a'}
++
++plt.rcParams.update({
++    'font.size': 10, 'axes.spines.top': False, 'axes.spines.right': False,
++    'axes.grid': True, 'axes.axisbelow': True, 'grid.color': '#e5e5e5', 'grid.linewidth': 0.8,
++    'axes.edgecolor': '#999999', 'legend.frameon': False,
++})
++
++
++# ---------------- reading the runs ----------------
++
++def find_runs(pattern):
++    # experiments/2026-11-21_0105_final_normal_r1 -> sorted list of folders
++    return sorted(glob.glob('experiments/*_' + pattern))
++
++
++def probe_max(folder, name):
++    rtts = []
++    path = os.path.join(folder, 'probe_%s.csv' % name)
++    if os.path.exists(path):
++        with open(path) as f:
++            for row in csv.DictReader(f):
++                rtts.append(float(row['rtt_ms']))
++    return max(rtts) if rtts else float('nan')
++
++
++def dctcp_sanctions(folder):
++    # How many times queue protection wrongly sanctioned the good L4S (DCTCP) flow
++    path = os.path.join(folder, 'router_log.txt')
++    if not os.path.exists(path):
++        return float('nan')
++    count = 0
++    for line in open(path):
++        if 'sanctioned' in line and '10.0.2.2:5202' in line:
++            count += int(line.split('sanctioned')[1].split('times')[0])
++    return count
++
++
++def normal_metrics(folder, mode):
++    l4s = read_probe(folder, 'l4s')
++    classic = read_probe(folder, 'classic')
++    l_q, c_q = read_queue_delays(folder, mode)
++    (c_rtt, _), (l_rtt, _) = read_iperf_rtt(folder, 'classic'), read_iperf_rtt(folder, 'l4s')
++    c_tput, l_tput = read_iperf(folder, 'classic'), read_iperf(folder, 'l4s')
++    return {
++        'l4s_probe_p50': l4s[0], 'l4s_probe_p99': l4s[2], 'l4s_probe_max': probe_max(folder, 'l4s'),
++        'classic_probe_p50': classic[0], 'classic_probe_p99': classic[2],
++        'l4s_qdelay_mean': sum(l_q) / len(l_q) if l_q else float('nan'),
++        'l4s_qdelay_p99': percentile(sorted(l_q), 99) if l_q else float('nan'),
++        'classic_qdelay_mean': sum(c_q) / len(c_q) if c_q else float('nan'),
++        'classic_tput': c_tput, 'l4s_tput': l_tput, 'total_tput': c_tput + l_tput,
++        'classic_flow_rtt': c_rtt, 'l4s_flow_rtt': l_rtt,
++        'ecn_ok': 1.0 if ecn_check(folder) == 'yes' else 0.0,
++    }
++
++
++def attack_metrics_flat(folder, mode):
++    a = attack_metrics(folder)
++    if not a:
++        return None
++    return {
++        'l4s_probe_p50': a['l4s_probe'][0], 'l4s_probe_p99': a['l4s_probe'][1],
++        'l4s_probe_max': probe_max(folder, 'l4s'),
++        'classic_probe_p50': a['classic_probe'][0], 'classic_probe_p99': a['classic_probe'][1],
++        'classic_tput': a['classic_tput'], 'l4s_tput': a['l4s_tput'], 'flood_tput': a['flood_tput'],
++        'dctcp_sanctions': dctcp_sanctions(folder) if mode.startswith('dualq_qp') else float('nan'),
++        'ecn_ok': 1.0 if ecn_check(folder) == 'yes' else 0.0,
++    }
++
++
++def collect(runs, modes, metric_fn):
++    # Returns {mode: {metric: [value from each run]}}
++    data = {}
++    for run in runs:
++        for mode in modes:
++            folder = os.path.join(run, mode)
++            if not os.path.isdir(folder):
++                continue
++            values = metric_fn(folder, mode)
++            if values is None:
++                continue
++            data.setdefault(mode, {})
++            for key, value in values.items():
++                data[mode].setdefault(key, []).append(value)
++    return data
++
++
++def mean_std(values):
++    values = [v for v in values if not math.isnan(v)]
++    if not values:
++        return float('nan'), float('nan')
++    m = sum(values) / len(values)
++    if len(values) < 2:
++        return m, 0.0
++    var = sum((v - m) ** 2 for v in values) / (len(values) - 1)
++    return m, math.sqrt(var)
++
++
++# ---------------- tables ----------------
++
++def fmt(values, digits=1):
++    m, s = mean_std(values)
++    if math.isnan(m):
++        return 'n/a'
++    return '%.*f ± %.*f' % (digits, m, digits, s)
++
++
++def write_table(name, title, data, modes, columns, n_runs, note):
++    # columns: list of (metric key, column header, digits)
++    md = ['## ' + title, '', 'Mean ± standard deviation over %d runs. %s' % (n_runs, note), '']
++    md.append('| Mode | ' + ' | '.join(c[1] for c in columns) + ' |')
++    md.append('|---|' + '---|' * len(columns))
++    rows = []
++    for mode in modes:
++        if mode not in data:
++            continue
++        cells = [fmt(data[mode].get(c[0], []), c[2]) for c in columns]
++        md.append('| %s | %s |' % (LABELS[mode].replace('\n', ' '), ' | '.join(cells)))
++        rows.append([mode] + [x for c in columns for x in mean_std(data[mode].get(c[0], []))])
++    with open(os.path.join(OUT, name + '.md'), 'w') as f:
++        f.write('\n'.join(md) + '\n')
++    with open(os.path.join(OUT, name + '.csv'), 'w', newline='') as f:
++        writer = csv.writer(f)
++        writer.writerow(['mode'] + [x for c in columns for x in (c[0] + '_mean', c[0] + '_std')])
++        for r in rows:
++            writer.writerow([r[0]] + ['%.3f' % v for v in r[1:]])
++    print('\n'.join(md) + '\n')
++
++
++# ---------------- figures ----------------
++
++def grouped_bars(ax, data, modes, series, ylabel, log=False):
++    # series: list of (metric key, label, color)
++    modes = [m for m in modes if m in data]
++    width = 0.8 / len(series)
++    for i, (key, label, color) in enumerate(series):
++        means, stds = [], []
++        for mode in modes:
++            m, s = mean_std(data[mode].get(key, []))
++            means.append(0 if math.isnan(m) else m)
++            stds.append(0 if math.isnan(s) else s)
++        x = [j + (i - (len(series) - 1) / 2) * width for j in range(len(modes))]
++        ax.bar(x, means, width * 0.9, yerr=stds, color=color, label=label,
++               error_kw={'elinewidth': 1, 'capsize': 3, 'ecolor': '#333333'})
++    ax.set_xticks(range(len(modes)))
++    ax.set_xticklabels([LABELS[m] for m in modes], fontsize=9)
++    ax.set_ylabel(ylabel)
++    if log:
++        ax.set_yscale('log')
++        ax.yaxis.set_major_formatter(ScalarFormatter())
++        ax.yaxis.set_minor_formatter(plt.NullFormatter())
++    # Legend below the panel, so it never covers a bar
++    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=len(series), fontsize=9)
++
++
++def fig_normal(data, n_runs):
++    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
++    grouped_bars(axes[0], data, NORMAL_MODES,
++                 [('l4s_probe_p99', 'L4S probe', COLORS['l4s']), ('classic_probe_p99', 'Classic probe', COLORS['classic'])],
++                 'Probe RTT, 99th percentile (ms, log)', log=True)
++    axes[0].set_yticks([20, 30, 50, 100, 200, 300])
++    axes[0].set_title('Latency (base RTT 20 ms)')
++    grouped_bars(axes[1], data, NORMAL_MODES,
++                 [('l4s_tput', 'L4S flow (DCTCP)', COLORS['l4s']), ('classic_tput', 'Classic flow (cubic)', COLORS['classic'])],
++                 'Throughput (Mbps)')
++    axes[1].set_title('Throughput split (link 50 Mbps)')
++    fig.suptitle('Normal scenario: mean ± std over %d runs' % n_runs)
++    fig.tight_layout()
++    fig.savefig(os.path.join(OUT, 'fig_normal.png'), dpi=150)
++    plt.close(fig)
++
++
++def fig_bulk_rtt(data, n_runs):
++    fig, ax = plt.subplots(figsize=(8, 4.6))
++    grouped_bars(ax, data, NORMAL_MODES,
++                 [('l4s_flow_rtt', 'L4S flow (DCTCP)', COLORS['l4s']), ('classic_flow_rtt', 'Classic flow (cubic)', COLORS['classic'])],
++                 'Mean RTT seen by the flow (ms)')
++    ax.axhline(20, color='#777777', linewidth=1, linestyle='--', label='base RTT (20 ms)')
++    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=3, fontsize=9)
++    ax.set_title('RTT of the bulk TCP flows themselves (iperf3), mean ± std over %d runs' % n_runs)
++    fig.tight_layout()
++    fig.savefig(os.path.join(OUT, 'fig_bulk_rtt.png'), dpi=150)
++    plt.close(fig)
++
++
++def fig_attack(data, n_runs):
++    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
++    grouped_bars(axes[0], data, ATTACK_MODES, [('l4s_probe_p99', 'L4S probe', COLORS['l4s'])],
++                 'L4S probe RTT p99 during attack (ms, log)', log=True)
++    axes[0].set_yticks([20, 30, 50, 100, 200, 300])
++    axes[0].set_title('L4S latency during the ECT(1) flood')
++    grouped_bars(axes[1], data, ATTACK_MODES,
++                 [('l4s_tput', 'L4S flow (DCTCP)', COLORS['l4s']), ('classic_tput', 'Classic flow (cubic)', COLORS['classic']),
++                  ('flood_tput', 'Flood (UDP)', COLORS['flood'])],
++                 'Throughput during attack (Mbps)')
++    axes[1].set_title('Who gets the link during the attack')
++    fig.suptitle('Attack scenario (60 Mbps ECT(1) UDP flood): mean ± std over %d runs' % n_runs)
++    fig.tight_layout()
++    fig.savefig(os.path.join(OUT, 'fig_attack.png'), dpi=150)
++    plt.close(fig)
++
++
++def copy_run1_figures(normal_runs, attack_runs):
++    copied = []
++    pairs = []
++    if normal_runs:
++        r = normal_runs[0]
++        pairs += [(r, 'latency_cdf.png', 'run1_normal_latency_cdf.png'),
++                  (r, 'throughput.png', 'run1_normal_throughput.png'),
++                  (r, 'internals_dualq.png', 'run1_normal_internals_dualq.png')]
++    if attack_runs:
++        r = attack_runs[0]
++        pairs += [(r, 'latency_timeseries.png', 'run1_attack_latency_timeseries.png'),
++                  (r, 'throughput.png', 'run1_attack_throughput.png'),
++                  (r, 'internals_dualq_qp.png', 'run1_attack_internals_dualq_qp.png'),
++                  (r, 'internals_dualq_qp_police.png', 'run1_attack_internals_dualq_qp_police.png')]
++    for run, src, dst in pairs:
++        path = os.path.join(run, src)
++        if os.path.exists(path):
++            shutil.copy(path, os.path.join(OUT, dst))
++            copied.append((dst, run))
++    return copied
++
++
++# ---------------- README ----------------
++
++def write_readme(normal_runs, attack_runs, breaker_runs, copied):
++    lines = ['# Final results', '',
++             'Generated by `eval/make_final.py` from the runs of `eval/run_final.sh`.',
++             'Raw data of every run (CSV/JSON, console output, config) is in the listed `experiments/` folders.', '',
++             '## Runs used', '']
++    for title, runs in [('Normal scenario', normal_runs), ('Attack scenario', attack_runs),
++                        ('Breaker off', breaker_runs)]:
++        lines.append('**%s:** ' % title + (', '.join('`%s`' % r for r in runs) if runs else 'none'))
++        lines.append('')
++    lines += ['## Setup', '',
++              '- Mininet: h1 - r0 - h2, 50 Mbps bottleneck inside r0, 20 ms base RTT, 1.5 MB buffer (our router).',
++              '- Normal: 1 Classic flow (cubic, Not-ECT) + 1 L4S flow (DCTCP with ECN, ECT(1)) + 2 UDP latency probes '
++              '(100 B every 10 ms; one ECT(1), one Not-ECT), 30 s.',
++              '- Attack: normal + 60 Mbps unresponsive ECT(1) UDP flood from t = 10 s to 30 s of a 40 s run. '
++              'Attack numbers are measured from 2 s after the flood starts until it ends.',
++              '- Modes: FIFO, DualQ basic (no overload handling), DualQ (RFC 9332 incl. overload), '
++              'DualQ+QP (our queue protection), DualQ+QP+limit (queue protection + 5 Mbps limit for sanctioned flows), '
++              'Linux fq_codel, Linux sch_dualpi2.', '',
++              '## Files', '',
++              '| File | What it shows |', '|---|---|',
++              '| `table_normal.md/.csv` | Normal scenario: probe RTTs, queue delays, throughput, bulk-flow RTT |',
++              '| `table_attack.md/.csv` | Attack scenario, during the flood: probe RTTs, throughputs, wrong sanctions of the DCTCP flow |',
++              '| `table_breaker.md` | Starvation breaker on vs off (attack scenario) |',
++              '| `fig_normal.png` | Probe p99 RTT and throughput split per mode (error bars = std over runs) |',
++              '| `fig_bulk_rtt.png` | RTT seen by the bulk Classic and L4S TCP flows |',
++              '| `fig_attack.png` | L4S probe p99 and throughput of each flow during the attack |']
++    for dst, run in copied:
++        lines.append('| `%s` | copy of a per-run graph from `%s` |' % (dst, run))
++    lines += ['', 'Column notes: probe RTT includes the 20 ms base RTT; queue delay is sampled every 100 ms inside the '
++              'bottleneck (our router and kernel dualpi2 only); "bulk flow RTT" is the mean RTT measured by the '
++              'sending TCP stack (iperf3); "DCTCP sanctions" counts how often queue protection wrongly sanctioned '
++              'the well-behaved L4S flow.']
++    with open(os.path.join(OUT, 'README.md'), 'w') as f:
++        f.write('\n'.join(lines) + '\n')
++
++
++# ---------------- main ----------------
++
++def main():
++    os.makedirs(OUT, exist_ok=True)
++    normal_runs = find_runs('final_normal_r*')
++    attack_runs = find_runs('final_attack_r*')
++    breaker_runs = find_runs('final_breaker_off')
++    print('normal runs:', normal_runs)
++    print('attack runs:', attack_runs)
++    print('breaker-off runs:', breaker_runs)
++    if not normal_runs and not attack_runs:
++        print('No final runs found. Run: sudo ./eval/run_final.sh')
++        return
++
++    if normal_runs:
++        normal = collect(normal_runs, NORMAL_MODES, normal_metrics)
++        write_table('table_normal', 'Normal scenario', normal, NORMAL_MODES, [
++            ('l4s_probe_p50', 'L4S probe p50 (ms)', 1), ('l4s_probe_p99', 'L4S probe p99 (ms)', 1),
++            ('classic_probe_p50', 'Classic probe p50 (ms)', 1), ('classic_probe_p99', 'Classic probe p99 (ms)', 1),
++            ('l4s_qdelay_mean', 'L4S queue mean (ms)', 2), ('l4s_qdelay_p99', 'L4S queue p99 (ms)', 2),
++            ('classic_qdelay_mean', 'Classic queue mean (ms)', 1),
++            ('classic_tput', 'Classic tput (Mbps)', 1), ('l4s_tput', 'L4S tput (Mbps)', 1),
++            ('classic_flow_rtt', 'Classic flow RTT (ms)', 1), ('l4s_flow_rtt', 'L4S flow RTT (ms)', 1),
++            ('ecn_ok', 'DCTCP+ECN ok', 2)],
++            len(normal_runs), 'Probe and flow RTTs include the 20 ms base RTT. FIFO has one queue (shown as Classic).')
++        fig_normal(normal, len(normal_runs))
++        fig_bulk_rtt(normal, len(normal_runs))
++
++    if attack_runs:
++        attack = collect(attack_runs, ATTACK_MODES, attack_metrics_flat)
++        write_table('table_attack', 'Attack scenario (during the flood)', attack, ATTACK_MODES, [
++            ('l4s_probe_p50', 'L4S probe p50 (ms)', 1), ('l4s_probe_p99', 'L4S probe p99 (ms)', 1),
++            ('classic_probe_p50', 'Classic probe p50 (ms)', 1), ('classic_probe_p99', 'Classic probe p99 (ms)', 1),
++            ('classic_tput', 'Classic tput (Mbps)', 1), ('l4s_tput', 'L4S tput (Mbps)', 1),
++            ('flood_tput', 'Flood tput (Mbps)', 1), ('dctcp_sanctions', 'DCTCP sanctions', 1),
++            ('ecn_ok', 'DCTCP+ECN ok', 2)],
++            len(attack_runs), 'Measured from 2 s after the flood starts until it stops.')
++        fig_attack(attack, len(attack_runs))
++
++        if breaker_runs:
++            modes = ['dualq', 'dualq_qp_police']
++            off = collect(breaker_runs, modes, attack_metrics_flat)
++            md = ['## Starvation breaker: on (50 ms) vs off', '',
++                  'ON = mean ± std of the %d final attack runs; OFF = %d run(s) with '
++                  '`config/router_config_breaker_off.ini`. "Max" = worst L4S probe RTT over the whole run '
++                  '(the spike at attack onset).' % (len(attack_runs), len(breaker_runs)), '',
++                  '| Mode | Breaker | L4S probe p99 during attack (ms) | L4S probe max, whole run (ms) | '
++                  'L4S tput (Mbps) | Classic tput (Mbps) | DCTCP sanctions |',
++                  '|---|---|---|---|---|---|---|']
++            for mode in modes:
++                for label, d in [('on', attack), ('off', off)]:
++                    if mode in d:
++                        v = d[mode]
++                        md.append('| %s | %s | %s | %s | %s | %s | %s |' % (
++                            LABELS[mode], label, fmt(v['l4s_probe_p99']), fmt(v['l4s_probe_max']),
++                            fmt(v['l4s_tput']), fmt(v['classic_tput']), fmt(v['dctcp_sanctions'])))
++            with open(os.path.join(OUT, 'table_breaker.md'), 'w') as f:
++                f.write('\n'.join(md) + '\n')
++            print('\n'.join(md) + '\n')
++
++    copied = copy_run1_figures(normal_runs, attack_runs)
++    write_readme(normal_runs, attack_runs, breaker_runs, copied)
++    print('Saved everything in', OUT)
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/eval/parse_metrics.py b/eval/parse_metrics.py
+index 2d2fa11..ad201b5 100644
+--- a/eval/parse_metrics.py
++++ b/eval/parse_metrics.py
+@@ -11,8 +11,8 @@ import json
+ import os
+ import re
+ 
+-MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'fq_codel', 'dualpi2']
+-OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp']
++MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police', 'fq_codel', 'dualpi2']
++OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police']
+ 
+ 
+ def percentile(sorted_values, p):
+@@ -57,6 +57,22 @@ def read_iperf(folder, name):
+         return float('nan')
+ 
+ 
++def read_iperf_rtt(folder, name):
++    # Mean RTT (ms) that the bulk TCP flow itself saw, measured by the sender's kernel,
++    # plus the congestion control it really used. This is the key L4S metric:
++    # an L4S flow should keep a low RTT while using its full share of the link.
++    path = os.path.join(folder, 'iperf_%s.json' % name)
++    if not os.path.exists(path):
++        return float('nan'), '?'
++    try:
++        data = json.load(open(path))
++        rtt_ms = data['end']['streams'][0]['sender']['mean_rtt'] / 1000.0
++        cc = data['end'].get('sender_tcp_congestion', '?')
++        return rtt_ms, cc
++    except (ValueError, KeyError, IndexError):
++        return float('nan'), '?'
++
++
+ def parse_tc_time(text):
+     # tc prints times like "850us", "12.3ms" or "1.2s". Returns ms.
+     match = re.match(r'([\d.]+)(us|ms|s)', text)
+@@ -187,11 +203,12 @@ def main():
+                'classic_p50_ms', 'classic_p95_ms', 'classic_p99_ms', 'classic_loss_pct',
+                'classic_tput_mbps', 'l4s_tput_mbps', 'total_tput_mbps',
+                'l4s_qdelay_mean_ms', 'l4s_qdelay_p99_ms', 'classic_qdelay_mean_ms', 'classic_qdelay_p99_ms',
+-               'l4s_ecn_ok',
++               'l4s_ecn_ok', 'classic_flow_rtt_ms', 'l4s_flow_rtt_ms',
+                'atk_l4s_p50_ms', 'atk_l4s_p99_ms', 'atk_classic_p50_ms', 'atk_classic_p99_ms',
+                'atk_classic_tput_mbps', 'atk_l4s_tput_mbps', 'atk_flood_tput_mbps']
+     rows = []
+     attacks = {}
++    flow_rtts = {}
+ 
+     for mode in MODES:
+         folder = os.path.join(args.input, mode)
+@@ -205,6 +222,7 @@ def main():
+         qdelay = [mean(l_q), percentile(sorted(l_q), 99), mean(c_q), percentile(sorted(c_q), 99)]
+         rows.append([mode] + list(l4s) + list(classic) + [c_tput, l_tput, c_tput + l_tput] + qdelay
+                     + [ecn_check(folder)])
++        flow_rtts[mode] = (read_iperf_rtt(folder, 'classic'), read_iperf_rtt(folder, 'l4s'))
+         attacks[mode] = attack_metrics(folder)
+ 
+     if not rows:
+@@ -213,25 +231,31 @@ def main():
+ 
+     # Print a readable table
+     print('Probe RTT in ms (base RTT is ~20 ms). Throughput in Mbps (link is 50 Mbps).\n')
+-    print('%-11s | %-26s | %-26s | %-22s' % ('', 'L4S probe  p50/p95/p99 loss', 'Classic probe p50/p95/p99 loss',
++    print('%-15s | %-26s | %-26s | %-22s' % ('', 'L4S probe  p50/p95/p99 loss', 'Classic probe p50/p95/p99 loss',
+                                            'Throughput C / L / total'))
+     for r in rows:
+-        print('%-11s | %6.1f %6.1f %6.1f %4.1f%% | %6.1f %6.1f %6.1f %4.1f%% | %5.1f / %5.1f / %5.1f' %
++        print('%-15s | %6.1f %6.1f %6.1f %4.1f%% | %6.1f %6.1f %6.1f %4.1f%% | %5.1f / %5.1f / %5.1f' %
+               (r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]))
+ 
+     print('\nQueue delay inside the bottleneck in ms (sampled every 100 ms; fq_codel does not report it)')
+-    print('%-11s | %-19s | %-19s | %s' % ('', 'L4S queue mean/p99', 'Classic mean/p99', 'L4S flow DCTCP+ECN?'))
++    print('%-15s | %-19s | %-19s | %s' % ('', 'L4S queue mean/p99', 'Classic mean/p99', 'L4S flow DCTCP+ECN?'))
+     for r in rows:
+-        print('%-11s | %8.2f %10.2f | %8.2f %10.2f | %s' % (r[0], r[12], r[13], r[14], r[15], r[16]))
++        print('%-15s | %8.2f %10.2f | %8.2f %10.2f | %s' % (r[0], r[12], r[13], r[14], r[15], r[16]))
+     print('(fifo has one queue: it is shown in the Classic column)')
+ 
++    print('\nRTT seen by the bulk TCP flows themselves (iperf3 sender mean, whole run; base RTT ~20 ms)')
++    print('%-15s | %-24s | %s' % ('', 'Classic flow RTT (cc)', 'L4S flow RTT (cc)'))
++    for r in rows:
++        (c_rtt, c_cc), (l_rtt, l_cc) = flow_rtts[r[0]]
++        print('%-15s | %8.1f ms (%-8s)    | %8.1f ms (%s)' % (r[0], c_rtt, c_cc, l_rtt, l_cc))
++
+     if any(attacks.values()):
+         print('\nDURING THE ATTACK (ECT(1) UDP flood, steady state from 2 s after it starts)')
+-        print('%-11s | %-17s | %-17s | %s' % ('', 'L4S probe p50/p99', 'Classic p50/p99', 'Tput Classic / L4S / flood (Mbps)'))
++        print('%-15s | %-17s | %-17s | %s' % ('', 'L4S probe p50/p99', 'Classic p50/p99', 'Tput Classic / L4S / flood (Mbps)'))
+         for mode in [r[0] for r in rows]:
+             a = attacks[mode]
+             if a:
+-                print('%-11s | %7.1f %8.1f | %7.1f %8.1f | %5.1f / %5.1f / %5.1f' % (
++                print('%-15s | %7.1f %8.1f | %7.1f %8.1f | %5.1f / %5.1f / %5.1f' % (
+                     mode, a['l4s_probe'][0], a['l4s_probe'][1], a['classic_probe'][0], a['classic_probe'][1],
+                     a['classic_tput'], a['l4s_tput'], a['flood_tput']))
+ 
+@@ -244,7 +268,9 @@ def main():
+             atk = []
+             if a:
+                 atk = list(a['l4s_probe']) + list(a['classic_probe']) + [a['classic_tput'], a['l4s_tput'], a['flood_tput']]
+-            writer.writerow([r[0]] + ['%.2f' % v for v in r[1:-1]] + [r[-1]] + ['%.2f' % v for v in atk])
++            (c_rtt, _), (l_rtt, _) = flow_rtts[r[0]]
++            writer.writerow([r[0]] + ['%.2f' % v for v in r[1:-1]] + [r[-1], '%.2f' % c_rtt, '%.2f' % l_rtt]
++                            + ['%.2f' % v for v in atk])
+     print('\nSaved', out_path)
+ 
+ 
+diff --git a/eval/plot_results.py b/eval/plot_results.py
+index cc7a211..baf76db 100644
+--- a/eval/plot_results.py
++++ b/eval/plot_results.py
+@@ -20,15 +20,17 @@ matplotlib.use('Agg')  # no screen needed, just save PNG files
+ import matplotlib.pyplot as plt
+ from matplotlib.ticker import ScalarFormatter
+ 
+-MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'fq_codel', 'dualpi2']
+-OUR_DUALQ_MODES = ['dualq_basic', 'dualq', 'dualq_qp']
++MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police', 'fq_codel', 'dualpi2']
++OUR_DUALQ_MODES = ['dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police']
+ LABELS = {'fifo': 'FIFO (ours)', 'dualq_basic': 'DualQ basic (ours)', 'dualq': 'DualQ + overload (ours)',
+-          'dualq_qp': 'DualQ + queue protection (ours)', 'fq_codel': 'fq_codel (kernel)',
++          'dualq_qp': 'DualQ + queue protection (ours)', 'dualq_qp_police': 'DualQ + QP + rate limit (ours)',
++          'fq_codel': 'fq_codel (kernel)',
+           'dualpi2': 'dualpi2 (kernel)'}
+ # One fixed color + line style per mode, the same in every graph
+ COLORS = {'fifo': '#2a78d6', 'dualq': '#eb6834', 'fq_codel': '#1baf7a', 'dualpi2': '#eda100',
+-          'dualq_qp': '#e87ba4', 'dualq_basic': '#008300'}
+-STYLES = {'fifo': '-', 'dualq_basic': '-.', 'dualq': '-', 'dualq_qp': '-', 'fq_codel': '--', 'dualpi2': ':'}
++          'dualq_qp': '#e87ba4', 'dualq_basic': '#008300', 'dualq_qp_police': '#6250d6'}
++STYLES = {'fifo': '-', 'dualq_basic': '-.', 'dualq': '-', 'dualq_qp': '-', 'dualq_qp_police': '-',
++          'fq_codel': '--', 'dualpi2': ':'}
+ FLOW_COLORS = {'classic': '#2a78d6', 'l4s': '#eb6834', 'flood': '#1baf7a'}
+ ATTACK_SHADE = '#ececec'
+ 
+diff --git a/eval/run_final.sh b/eval/run_final.sh
+new file mode 100755
+index 0000000..f875999
+--- /dev/null
++++ b/eval/run_final.sh
+@@ -0,0 +1,51 @@
++#!/bin/bash
++# FINAL experiment suite for the report.
++#
++# Runs, in this order:
++#   1. normal scenario, all modes, REPEATS times   (label final_normal_r1, r2, ...)
++#   2. attack scenario, all modes, REPEATS times   (label final_attack_r1, r2, ...)
++#   3. attack scenario with the starvation breaker switched off (label final_breaker_off)
++# Every run is archived in experiments/<date_time>_<label>/ (as usual), then
++# eval/make_final.py builds results/final/ (tables with mean +- std, figures, README).
++#
++# Usage (from the repo root):  sudo ./eval/run_final.sh [repeats]
++#   repeats = 3 by default, about 35 minutes in total
++
++REPEATS=${1:-3}
++
++if [ "$EUID" -ne 0 ]; then
++    echo "Please run with sudo"
++    exit 1
++fi
++
++NORMAL_MODES="fifo dualq dualq_qp dualq_qp_police fq_codel dualpi2"
++ATTACK_MODES="dualq_basic dualq dualq_qp dualq_qp_police fq_codel dualpi2"
++
++START=$(date +%s)
++
++for i in $(seq 1 $REPEATS); do
++    echo ""
++    echo "######## Repeat $i of $REPEATS: normal ########"
++    ./eval/traffic_profile.sh final_normal_r$i normal 30 "$NORMAL_MODES"
++
++    echo ""
++    echo "######## Repeat $i of $REPEATS: attack ########"
++    ./eval/traffic_profile.sh final_attack_r$i attack 40 "$ATTACK_MODES"
++done
++
++echo ""
++echo "######## Breaker test: attack with the starvation breaker OFF ########"
++ROUTER_CONFIG=config/router_config_breaker_off.ini \
++    ./eval/traffic_profile.sh final_breaker_off attack 40 "dualq dualq_qp_police"
++
++echo ""
++echo "######## Building results/final ########"
++python3 eval/make_final.py || \
++    echo "make_final.py failed (matplotlib missing for root?). Run without sudo: python3 eval/make_final.py"
++
++if [ -n "$SUDO_USER" ]; then
++    chown -R "$SUDO_USER" experiments results eval/results 2>/dev/null
++fi
++
++echo ""
++echo "Done in $(( ($(date +%s) - START) / 60 )) minutes. Final tables and figures: results/final/"
+diff --git a/eval/traffic_profile.sh b/eval/traffic_profile.sh
+index 628df75..37d07b5 100755
+--- a/eval/traffic_profile.sh
++++ b/eval/traffic_profile.sh
+@@ -11,7 +11,7 @@
+ #   sudo ./eval/traffic_profile.sh attack_test attack 40
+ #   sudo ./eval/traffic_profile.sh qp_only attack 40 "dualq dualq_qp"
+ #
+-# Modes: fifo dualq_basic dualq dualq_qp (our router) | fq_codel dualpi2 (Linux kernel)
++# Modes: fifo dualq_basic dualq dualq_qp dualq_qp_police (our router) | fq_codel dualpi2 (Linux kernel)
+ 
+ LABEL=$1
+ SCENARIO=${2:-normal}
+@@ -30,7 +30,7 @@ fi
+ # Default modes for each scenario
+ if [ -z "$MODES" ]; then
+     if [ "$SCENARIO" = "attack" ]; then
+-        MODES="dualq_basic dualq dualq_qp fq_codel dualpi2"
++        MODES="dualq_basic dualq dualq_qp dualq_qp_police fq_codel dualpi2"
+     else
+         MODES="fifo dualq dualq_qp fq_codel dualpi2"
+     fi
+@@ -53,6 +53,7 @@ mkdir -p "$RUN_DIR"
+     echo "Scenario: $SCENARIO | duration: $DURATION s | modes: $MODES"
+     echo "Git commit: $(git -c safe.directory='*' rev-parse --short HEAD 2>/dev/null)"
+     echo "Kernel: $(uname -r)"
++    echo "Router config: ${ROUTER_CONFIG:-config/router_config.ini}"
+ 
+     make || exit 1
+     rm -rf eval/results
+@@ -74,7 +75,7 @@ mkdir -p "$RUN_DIR"
+ 
+ # Archive: copy all results and graphs, plus the config used
+ cp -r eval/results/* "$RUN_DIR/" 2>/dev/null
+-cp config/router_config.ini "$RUN_DIR/"
++cp "${ROUTER_CONFIG:-config/router_config.ini}" "$RUN_DIR/router_config.ini"
+ touch eval/results/.archived
+ 
+ # Results were written as root; give them back to the normal user
+diff --git a/experiments/2026-11-20_sim2_offline_attack_policing/output.txt b/experiments/2026-11-20_sim2_offline_attack_policing/output.txt
+new file mode 100644
+index 0000000..10b18b8
+--- /dev/null
++++ b/experiments/2026-11-20_sim2_offline_attack_policing/output.txt
+@@ -0,0 +1,7 @@
++# Output of sim_attack.cpp (offline, real-time, no Mininet), 6 s per mode, first 2 s skipped
++# Same as sim1 plus mode dualq_qp_police (5 Mbps rate limit) and the share of time in overload (p_C >= 0.25)
++# Built with: g++ -std=c++17 -O2 -Iinclude experiments/2026-11-20_sim2_offline_attack_policing/sim_attack.cpp src/classifier.cpp src/dual_queue.cpp src/pi2_aqm.cpp src/scheduler.cpp src/queue_protection.cpp -o sim_attack
++dualq_basic  probe delay  259.32 ms | L queue  259.09 ms | C queue   0.01 ms | tput flood  46.2 classic   3.7 Mbps | p_C 0.000 | overload   0% of time | policed 0
++dualq        probe delay   15.32 ms | L queue   15.01 ms | C queue   0.03 ms | tput flood  42.8 classic   7.0 Mbps | p_C 0.303 | overload  99% of time | policed 0
++dualq_qp     probe delay    0.20 ms | L queue    0.06 ms | C queue  16.40 ms | tput flood  42.7 classic   7.0 Mbps | p_C 0.289 | overload 100% of time | policed 0
++dualq_qp_police probe delay    0.07 ms | L queue    0.05 ms | C queue   0.02 ms | tput flood   5.7 classic  10.0 Mbps | p_C 0.000 | overload   0% of time | policed 28237
+diff --git a/experiments/2026-11-20_sim2_offline_attack_policing/sim_attack.cpp b/experiments/2026-11-20_sim2_offline_attack_policing/sim_attack.cpp
+new file mode 100644
+index 0000000..104461b
+--- /dev/null
++++ b/experiments/2026-11-20_sim2_offline_attack_policing/sim_attack.cpp
+@@ -0,0 +1,70 @@
++// Real-time simulation of the router's queue/AQM decisions (same logic as main.cpp step 1 + 3 + 4)
++#include <cstdio>
++#include <cstring>
++#include <string>
++#include <arpa/inet.h>
++#include "classifier.hpp"
++#include "dual_queue.hpp"
++#include "pi2_aqm.hpp"
++#include "scheduler.hpp"
++#include "queue_protection.hpp"
++using namespace std::chrono;
++
++void make_pkt(uint8_t* f, int len, uint16_t sport, uint8_t ecn) {
++    memset(f,0,len); f[12]=8; f[13]=0; uint8_t* ip=f+14; ip[0]=0x45; ip[1]=ecn; ip[8]=64; ip[9]=17;
++    uint32_t s=inet_addr("10.0.1.1"), d=inet_addr("10.0.2.1"); memcpy(ip+12,&s,4); memcpy(ip+16,&d,4);
++    ip[20]=sport>>8; ip[21]=sport&0xff; ip[22]=0x14; ip[23]=0x53;
++}
++
++void run(const std::string& mode, double seconds) {
++    bool use_qp=(mode=="dualq_qp"||mode=="dualq_qp_police"), use_police=(mode=="dualq_qp_police"), use_overload=(mode=="dualq"||use_qp);
++    AQMConfig ac; PI2AQM aqm(ac); SchedulerConfig sc; sc.classic_max_wait_ms=50; DualQScheduler sched(sc);
++    DualQueue q(1500000); QueueProtection qp(30000, 1000, use_police ? 5e6 : 0);
++    double p_cmax = 1.0/(ac.k_factor*ac.k_factor), rate=50e6;
++    uint8_t flood[1442], classic[1514], probe[100];
++    make_pkt(flood,1442,40000,1); make_pkt(classic,1514,40001,0); make_pkt(probe,100,40002,1);
++    struct Src { uint8_t* f; int len; double bps; Clock::time_point next; } src[3];
++    auto t0 = Clock::now();
++    src[0]={flood,1442,60e6,t0}; src[1]={classic,1514,10e6,t0}; src[2]={probe,100,100*8/0.01,t0};
++    auto next_tx=t0, next_up=t0;
++    double sent_bytes[3]={0}, probe_delay_sum=0; int probe_n=0; long l_drops=0,c_drops=0,redir=0,policed=0; long ovl_samples=0;
++    double l_delay_sum=0, c_delay_sum=0; int samples=0; auto next_sample=t0+milliseconds(1000);
++    while (Clock::now()-t0 < duration<double>(seconds)) {
++        auto now = Clock::now();
++        for (int i=0;i<3;i++) while (now >= src[i].next) {        // arrivals
++            PacketInfo info = parse_packet(src[i].f, src[i].len);
++            bool to_l4s = info.is_l4s, sanc=false;
++            bool keep=true;
++            if (to_l4s && use_qp && !qp.allow_l4s(info, src[i].len, now)) { to_l4s=false; sanc=true; redir++; if (use_police && !qp.police(info.flow_id, src[i].len, now)) { keep=false; policed++; } }
++            if (keep && q.enqueue(src[i].f, src[i].len, info.ecn, to_l4s, info.flow_id, sanc) && to_l4s && use_qp) qp.add_bytes(info.flow_id, src[i].len);
++            src[i].next += duration_cast<Clock::duration>(duration<double>(src[i].len*8.0/src[i].bps));
++        }
++        if (now >= next_up) {                                       // PI2 update
++            double d = q.classic_delay_ms(now);
++            if (use_overload && q.l4s_delay_ms(now) > d) d = q.l4s_delay_ms(now);
++            aqm.update_control_loop(d); next_up += milliseconds(16);
++        }
++        if (now >= next_tx && !q.both_empty()) {                    // dequeue
++            SelectedQueue s = sched.select_next_queue(q.classic_empty(), q.l4s_empty(), q.classic_head_time());
++            Packet p = (s==SelectedQueue::L4S) ? q.pop_l4s() : q.pop_classic();
++            double soj = duration<double,std::milli>(now-p.enqueue_time).count();
++            bool drop=false, overload = use_overload && aqm.read_p_c() >= p_cmax;
++            if (use_qp && s==SelectedQueue::L4S) qp.remove_bytes(p.flow_id, p.data.size());
++            if (s==SelectedQueue::CLASSIC) { if (aqm.should_drop_classic(soj) && (p.ecn==ECN_NOT_ECT||overload||p.sanctioned)) { drop=true; c_drops++; } }
++            else { if (overload && aqm.should_drop_classic(soj)) { drop=true; l_drops++; } else aqm.should_mark_l4s(soj); }
++            if (!drop) {
++                int len=p.data.size(); int who = (len==1442)?0:(len==1514)?1:2;
++                if (now-t0 > std::chrono::seconds(2)) { sent_bytes[who]+=len; if (who==2){probe_delay_sum+=soj;probe_n++;} }
++                sched.notify_packet_dispatched(s,len);
++                if (now-next_tx > milliseconds(1)) next_tx=now;
++                next_tx += duration_cast<Clock::duration>(duration<double>(len*8.0/rate));
++            }
++        }
++        if (now >= next_sample) { l_delay_sum+=q.l4s_delay_ms(now); c_delay_sum+=q.classic_delay_ms(now); samples++; if (use_overload && aqm.read_p_c()>=p_cmax) ovl_samples++; next_sample+=milliseconds(50); }
++    }
++    double meas = seconds-2;
++    printf("%-12s probe delay %7.2f ms | L queue %7.2f ms | C queue %6.2f ms | tput flood %5.1f classic %5.1f Mbps | p_C %.3f | overload %3.0f%% of time | policed %ld\n",
++        mode.c_str(), probe_n? probe_delay_sum/probe_n:0, l_delay_sum/samples, c_delay_sum/samples,
++        sent_bytes[0]*8/meas/1e6, sent_bytes[1]*8/meas/1e6, aqm.read_p_c(), 100.0*ovl_samples/samples, policed);
++}
++int main(){ for (auto m : {"dualq_basic","dualq","dualq_qp","dualq_qp_police"}) run(m, 6); }
+diff --git a/experiments/LOG.md b/experiments/LOG.md
+index bdaf277..9104cd6 100644
+--- a/experiments/LOG.md
++++ b/experiments/LOG.md
+@@ -172,6 +172,107 @@ During the attack (steady state, 2 s after the flood starts):
+ 
+ ---
+ 
++## Debug 2: 2026-11-20 06:43, ECN check after the fix
++
++- **Code:** batch 6 (commit 92cf4db)
++- **Folder:** `2026-11-20_0643_ecn_debug/` (written by `--debug-ecn`)
++- **Result:**
++  - Test A (old way, `iperf3 -C dctcp`): SYN `[S]`, `dctcp-reno`. Still fails, as expected.
++  - **Test B (new way, route `congctl dctcp` to 10.0.2.2): SYN `[SEW]` → SYN-ACK `[S.E]`, ss shows `dctcp:(ce_state:0,alpha:17,ab_ecn:0,ab_tot:3282616)`.** DCTCP with ECN works.
++- **Use in report:** before/after evidence for the ECN negotiation fix.
++
++---
++
++## Run 5: 2026-11-20 06:43, normal_v2 (first run with a real L4S flow)
++
++- **Code:** batch 6, commit 92cf4db, kernel 7.0.0-43
++- **Folder:** `2026-11-20_0643_normal_v2/`
++- **Scenario / modes / duration:** normal, fifo dualq dualq_qp fq_codel dualpi2, 30 s
++- **Status:** **valid.** All modes `OK: L4S flow is using DCTCP with ECN`.
++
++| Mode | L4S probe p50/p99/max (ms) | Classic probe p50/p99 (ms) | L4S queue mean/p99 (ms) | Classic queue mean/p99 (ms) | Tput C / L / total |
++|---|---|---|---|---|---|
++| fifo | 196.7 / 259.9 / 260.2 | 196.8 / 259.9 | – | 136.9 / 239.4 (single queue) | 19.0 / 28.5 / 47.5 |
++| **dualq (ours)** | **20.3 / 21.2 / 23.7** | 34.2 / 40.5 | **0.09 / 0.70** | 10.1 / 19.8 | **23.0 / 24.5 / 47.5** |
++| dualq_qp (ours) | 20.3 / 21.2 / 21.6 | 34.4 / 40.4 | 0.10 / 0.65 | 10.4 / 19.9 | 22.0 / 25.5 / 47.5 |
++| fq_codel | 20.2 / 20.4 / 20.6 | 20.2 / 20.4 | n/a | n/a | 23.5 / 24.0 / 47.5 |
++| **dualpi2 (kernel)** | **20.4 / 21.2 / 21.6** | 34.0 / 40.8 | **0.18 / 0.83** | 11.3 / 19.7 | **21.7 / 25.7 / 47.5** |
++
++**Findings**
++1. **Main result: our router reproduces RFC 9332 DualQ Coupled AQM with a real L4S flow, matching Linux `sch_dualpi2`.**
++   - The L4S queue stays below 1 ms (mean 0.09 ms, p99 0.70 ms; kernel 0.18 / 0.83) while the DCTCP flow carries half the link.
++   - The Classic queue is held at the 15 ms target region (mean 10.1 ms; kernel 11.3 ms).
++2. **Coupling gives rate fairness.** DCTCP and cubic split the link about evenly (24.5 vs 23.0 Mbps; kernel 25.7 vs 21.7), although DCTCP sees far more congestion signals (2,737 CE marks vs 27 Classic drops). This is the p_C = (p_CL / k)² law working.
++3. **Bufferbloat baseline** reproduced again (FIFO p99 260 ms).
++4. **Queue protection: no false positives with a real DCTCP flow.** dualq_qp moved 0 packets and behaved like dualq.
++5. **No startup spikes this time** (max 23.7 ms vs 86–143 ms in Run 3). In Run 3 both bulk flows were Classic, so the Classic slow-start overshoot was larger. This supports the starvation-breaker explanation; the breaker is still tested separately.
++6. **Bulk-flow RTT: where L4S beats fq_codel.** The RTT measured by each sending TCP stack (iperf3 `mean_rtt`, computed afterwards from this run's files):
++
++   | Mode | Classic flow (cubic) | L4S flow (DCTCP) |
++   |---|---|---|
++   | fifo | 193.5 ms | 192.5 ms |
++   | **dualq (ours)** | 32.6 ms | **20.5 ms** |
++   | dualq_qp (ours) | 33.7 ms | 20.6 ms |
++   | fq_codel | 23.3 ms | **28.0 ms** |
++   | dualpi2 (kernel) | 33.6 ms | 20.6 ms |
++
++   fq_codel gives ~20 ms to the sparse probes, but the **bulk DCTCP flow itself sees 28.0 ms** there (about 8 ms of queuing). In our DualQ and the kernel's dualpi2 it sees **20.5 ms (0.5 ms of queuing) at full share of the link**. That is the L4S promise: low latency for capacity-seeking flows, not only for sparse ones. Trade-off: Classic flows see ~33 ms under DualQ (15 ms target) vs 23 ms under fq_codel.
++
++**Use in report:** headline result table (findings 1–2); validation against the kernel.
++
++---
++
++## Run 6: 2026-11-20 06:46, attack_v2 (real L4S flow + ECT(1) flood)
++
++- **Code:** same as Run 5
++- **Folder:** `2026-11-20_0646_attack_v2/`
++- **Scenario / modes / duration:** attack (60 Mbps ECT(1) UDP flood, t = 10–30 s), dualq_basic dualq dualq_qp fq_codel dualpi2, 40 s
++- **Status:** valid. All modes DCTCP + ECN OK.
++
++During the attack (steady state, 2 s after the flood starts):
++
++| Mode | L4S probe p50/p99 (ms) | L4S probe loss (whole run) | Classic probe p50/p99 (ms) | Tput Classic / L4S / flood (Mbps) |
++|---|---|---|---|---|
++| dualq_basic | 260.4 / 262.2 | 0.1% | 20.2 / 20.3 | 0.0 / 0.0 / 48.3 |
++| dualq (ours) | **35.2 / 38.0** | 11.4% | 20.2 / 21.1 | 0.4 / 0.2 / 47.7 |
++| dualq_qp (ours) | **20.2 / 22.3** | **1.0%** | 35.0 / 46.4 | 0.2 / **0.9** / 47.2 |
++| fq_codel | 20.2 / 20.4 | 0.0% | 20.2 / 20.4 | 15.7 / 15.9 / 16.2 |
++| dualpi2 (kernel) | **35.2 / 37.9** | 10.4% | 20.4 / 23.5 | 0.4 / 0.2 / 47.9 |
++
++**Findings**
++1. **Overload handling matches the kernel again, now with a real L4S flow:** L4S probe 35.2/38.0 vs 35.2/37.9 ms; flood 47.7 vs 47.9 Mbps. This repeats Run 4.
++2. **Queue protection keeps the L4S queue fast:** L4S probe 20.2/22.3 ms during the attack, L4S queue mean 0.75 ms over the run, probe loss 1.0% (vs ~11% without protection). The flood was sanctioned 20 times.
++3. **New problem: the good DCTCP flow still starves (0.9 Mbps) with queue protection.** The sanctioned flood, now in the Classic queue, keeps the PI2 controller in **overload** (p_C ≥ 0.25). Then the coupled probability p_CL = k·p' ≥ 1, so **every L4S packet is CE-marked** and DCTCP shrinks to its minimum window. Sim 2 confirms this: dualq_qp is in overload 100% of the time. Moving the flood out of the L4S queue is not enough; it must also be **limited**. → Phase 3b: rate limit for sanctioned flows (mode `dualq_qp_police`).
++4. **One false positive:** the DCTCP flow was sanctioned once (116 packets) right at attack onset. Likely cause: the flood suddenly fills the Classic queue, the 50 ms starvation breaker gives Classic strict priority, and DCTCP's backlog in the L4S queue grows past 30 KB. The same onset effect gives the ~145 ms probe spike in dualq and dualq_qp.
++5. fq_codel again shares fairly (15.7 / 15.9 / 16.2 Mbps) with ~20 ms probes. This is the bar for the policing mode.
++
++**Use in report:** overload validation (finding 1); the queue-protection latency result (finding 2); the coupling insight that motivates policing (finding 3). This is a genuine, non-obvious design lesson.
++
++---
++
++## Sim 2: 2026-11-20, offline attack simulation with policing
++
++- **Folder:** `2026-11-20_sim2_offline_attack_policing/` (same setup as Sim 1, plus `dualq_qp_police` with a 5 Mbps limit, plus the share of time in overload)
++
++| Mode | L4S probe queue delay | Classic queue | Flood / Classic tput (Mbps) | p_C | Time in overload |
++|---|---|---|---|---|---|
++| dualq_basic | 259 ms | 0.0 ms | 46.2 / 3.7 | 0.00 | 0% |
++| dualq | 15.3 ms | 0.0 ms | 42.8 / 7.0 | 0.30 | 99% |
++| dualq_qp | 0.20 ms | 16.4 ms | 42.7 / 7.0 | 0.29 | **100%** |
++| **dualq_qp_police** | **0.07 ms** | **0.02 ms** | **5.7 / 10.0** | **0.00** | **0%** |
++
++**Findings:** (1) this confirms Run 6 finding 3: with redirect-only queue protection the controller sits in overload all the time, which forces 100% L4S marking. (2) With the 5 Mbps limit the flood can no longer congest the Classic queue: no overload, p_C ≈ 0, and the Classic stream gets its full 10 Mbps. Prediction for Mininet: with `dualq_qp_police`, the DCTCP flow keeps its throughput during the attack.
++
++---
++
++## Final suite: `eval/run_final.sh` → `results/final/`
++
++- Runs normal ×3 and attack ×3 (all modes, including `dualq_qp_police`), plus one attack run with the starvation breaker off (`config/router_config_breaker_off.ini`).
++- `eval/make_final.py` builds `results/final/`: tables with mean ± std (`table_normal`, `table_attack`, `table_breaker`), error-bar figures (`fig_normal`, `fig_attack`, `fig_bulk_rtt`), copies of the repeat-1 graphs, and a README listing the source runs.
++- **After running: add the key numbers and findings here** (policing result, breaker on/off, run-to-run spread).
++
++---
++
+ ## Entry template
+ 
+ ```
+diff --git a/include/queue_protection.hpp b/include/queue_protection.hpp
+index 2f7126e..9cf6d7b 100644
+--- a/include/queue_protection.hpp
++++ b/include/queue_protection.hpp
+@@ -22,18 +22,27 @@ using Clock = std::chrono::steady_clock;
+ // showed it does not react to marks).
+ // Well-behaved flows (DCTCP, the latency probe) keep only a small backlog,
+ // so they are never touched.
++//
++// Optional policing (mode dualq_qp_police): a sanctioned flow may also send at
++// most police_rate into the Classic queue (token bucket); the rest is dropped.
++// Without it, an unresponsive flood moved to Classic keeps the PI2 controller in
++// overload, and the coupled marking then pushes the good L4S flows down too.
+ 
+ struct FlowState {
+     uint32_t l4s_bytes = 0;               // bytes this flow has in the L4S queue now
+     Clock::time_point sanctioned_until;    // while now < this, the flow uses the Classic queue
+     uint32_t times_sanctioned = 0;
+     uint64_t redirected_pkts = 0;
++    uint64_t policed_pkts = 0;             // dropped by the rate limit while sanctioned
++    double tokens = 0;                     // token bucket (bytes) for policing
++    Clock::time_point last_refill;
+     std::string name;                      // for the summary, e.g. "10.0.1.1:40000 > 10.0.2.1:5203 udp"
+ };
+ 
+ class QueueProtection {
+ public:
+-    QueueProtection(uint32_t max_flow_bytes, double sanction_ms);
++    // police_rate_bps = 0 means no policing (only redirect to Classic)
++    QueueProtection(uint32_t max_flow_bytes, double sanction_ms, double police_rate_bps = 0);
+ 
+     // Call for every L4S packet before it is queued.
+     // Returns true if it may use the L4S queue, false if it must go to Classic.
+@@ -43,10 +52,15 @@ public:
+     void add_bytes(uint64_t flow_id, int len);     // after a packet entered the L4S queue
+     void remove_bytes(uint64_t flow_id, int len);  // after a packet left the L4S queue
+ 
++    // For a packet of a sanctioned flow: true = may enter the Classic queue,
++    // false = over the rate limit, drop it
++    bool police(uint64_t flow_id, int len, Clock::time_point now);
++
+     void print_summary() const;
+ 
+ private:
+     uint32_t max_flow_bytes_;
+     Clock::duration sanction_time_;
++    double police_rate_bps_;
+     std::map<uint64_t, FlowState> flows_;
+ };
+diff --git a/mininet/topo_bottleneck.py b/mininet/topo_bottleneck.py
+index d980846..58e916e 100755
+--- a/mininet/topo_bottleneck.py
++++ b/mininet/topo_bottleneck.py
+@@ -8,7 +8,7 @@
+ #
+ # Interactive:  sudo python3 mininet/topo_bottleneck.py
+ # Automatic:    sudo python3 mininet/topo_bottleneck.py --run dualq --scenario normal --duration 30
+-#   modes:      fifo, dualq_basic, dualq, dualq_qp (our router) | fq_codel, dualpi2 (Linux kernel)
++#   modes:      fifo, dualq_basic, dualq, dualq_qp, dualq_qp_police (our router) | fq_codel, dualpi2 (kernel)
+ #   scenarios:  normal = 1 Classic flow + 1 L4S flow + 2 latency probes
+ #               attack = normal + an ECT(1) UDP flood (60 Mbps) that ignores marks,
+ #                        from t=10 s until 10 s before the end
+@@ -22,9 +22,12 @@ from mininet.cli import CLI
+ from mininet.log import setLogLevel
+ 
+ RATE_MBIT = 50  # must match rate_mbps in config/router_config.ini
+-OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp']
++OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police']
+ KERNEL_MODES = ['fq_codel', 'dualpi2']
+ ATTACK_START = 10    # seconds after the flows start
++# Router config file. Can be changed for one run with the ROUTER_CONFIG environment
++# variable, e.g. ROUTER_CONFIG=config/router_config_breaker_off.ini (used by eval/run_final.sh)
++ROUTER_CONFIG = os.environ.get('ROUTER_CONFIG', 'config/router_config.ini')
+ FLOOD_RATE = '60M'   # more than the 50 Mbps link
+ 
+ 
+@@ -115,8 +118,8 @@ def run_experiment(net, mode, scenario, duration):
+     # 1. Start the forwarding path
+     path_start = time.time()
+     if mode in OUR_MODES:
+-        r0.cmd('./build/l4s_router config/router_config.ini %s %s/router_stats.csv > %s/router_log.txt 2>&1 &'
+-               % (mode, out, out))
++        r0.cmd('./build/l4s_router %s %s %s/router_stats.csv > %s/router_log.txt 2>&1 &'
++               % (ROUTER_CONFIG, mode, out, out))
+     else:
+         if not setup_kernel_baseline(r0, mode):
+             return
+@@ -141,7 +144,7 @@ def run_experiment(net, mode, scenario, duration):
+ 
+     # Write down the settings of this run (used by the plots and kept for the report)
+     with open(out + '/run_info.txt', 'w') as f:
+-        f.write('mode=%s\nscenario=%s\nduration=%d\n' % (mode, scenario, duration))
++        f.write('mode=%s\nscenario=%s\nduration=%d\nconfig=%s\n' % (mode, scenario, duration, ROUTER_CONFIG))
+         # seconds between router start and flow start (to line up router_stats.csv with the flows)
+         f.write('flows_start=%.2f\n' % (time.time() - path_start))
+         if scenario == 'attack':
+@@ -162,7 +165,7 @@ def run_experiment(net, mode, scenario, duration):
+     # so we can compare its L4S queue delay with our router's.
+     if mode == 'dualpi2':
+         r0.cmd('(while true; do tc -s qdisc show dev r0-eth1 | grep delay_c; sleep 0.1; done) > %s/tc_samples.txt 2>&1 &'
+-               ' echo $! > %s/tc_loop.pid' % (out, out))
++               ' echo $! > /tmp/tc_loop.pid' % out)
+ 
+     # 5. After 5 s, check that the L4S flow really uses DCTCP with ECN
+     time.sleep(5)
+@@ -181,7 +184,7 @@ def run_experiment(net, mode, scenario, duration):
+     # 7. Stop everything
+     r0.cmd('pkill -INT l4s_router')
+     if mode == 'dualpi2':
+-        r0.cmd('kill $(cat %s/tc_loop.pid) 2>/dev/null' % out)
++        r0.cmd('kill $(cat /tmp/tc_loop.pid) 2>/dev/null')
+     h2.cmd('pkill iperf3')
+     h2.cmd('pkill -f latency_probe.py')
+     time.sleep(1)
+diff --git a/results/.gitignore b/results/.gitignore
+new file mode 100644
+index 0000000..1fb8a73
+--- /dev/null
++++ b/results/.gitignore
+@@ -0,0 +1,4 @@
++# Keep the final tables and figures in git, for the report.
++# (The root .gitignore ignores *.csv and *.png everywhere; this re-includes them here.)
++!*.csv
++!*.png
+diff --git a/src/main.cpp b/src/main.cpp
+index 093fab6..a274112 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -10,6 +10,7 @@
+ //   dualq_basic  DualQ + coupled PI2, without overload handling
+ //   dualq        DualQ + coupled PI2 + RFC 9332 overload handling
+ //   dualq_qp     dualq + our queue protection for the L4S queue
++//   dualq_qp_police  dualq_qp + rate limit for sanctioned flows
+ 
+ #include <arpa/inet.h>
+ #include <poll.h>
+@@ -105,12 +106,13 @@ struct Stats {
+     uint64_t big_frames = 0;   // frames > 1514 bytes, means offloads are still ON
+     uint64_t l4s_drops = 0;    // L4S packets dropped because of overload
+     uint64_t qp_redirects = 0; // L4S packets moved to Classic by queue protection
++    uint64_t qp_policed = 0;   // packets of sanctioned flows dropped by the rate limit
+ };
+ 
+ int main(int argc, char* argv[]) {
+ 
+     if (argc < 2) {
+-        printf("Usage: %s <config.ini> [fifo|dualq_basic|dualq|dualq_qp] [stats.csv]\n", argv[0]);
++        printf("Usage: %s <config.ini> [fifo|dualq_basic|dualq|dualq_qp|dualq_qp_police] [stats.csv]\n", argv[0]);
+         return 1;
+     }
+ 
+@@ -119,13 +121,15 @@ int main(int argc, char* argv[]) {
+     // ---------- read settings ----------
+     std::string mode = get_str(cfg, "mode", "dualq");
+     if (argc >= 3) mode = argv[2];  // command line overrides config
+-    if (mode != "fifo" && mode != "dualq_basic" && mode != "dualq" && mode != "dualq_qp") {
+-        printf("mode must be fifo, dualq_basic, dualq or dualq_qp\n");
++    if (mode != "fifo" && mode != "dualq_basic" && mode != "dualq" && mode != "dualq_qp"
++        && mode != "dualq_qp_police") {
++        printf("mode must be fifo, dualq_basic, dualq, dualq_qp or dualq_qp_police\n");
+         return 1;
+     }
+     bool use_aqm = (mode != "fifo");
+-    bool use_overload = (mode == "dualq" || mode == "dualq_qp");
+-    bool use_qp = (mode == "dualq_qp");
++    bool use_qp = (mode == "dualq_qp" || mode == "dualq_qp_police");
++    bool use_police = (mode == "dualq_qp_police");
++    bool use_overload = (mode == "dualq" || use_qp);
+ 
+     std::string in_if = get_str(cfg, "in_if", "r0-eth0");
+     std::string out_if = get_str(cfg, "out_if", "r0-eth1");
+@@ -163,11 +167,13 @@ int main(int argc, char* argv[]) {
+ 
+     uint32_t qp_max_flow_bytes = (uint32_t)get_num(cfg, "qp_max_flow_bytes", 30000);
+     double qp_sanction_ms = get_num(cfg, "qp_sanction_ms", 1000);
++    double qp_police_bps = get_num(cfg, "qp_police_rate_mbps", 5) * 1e6;
+ 
+     printf("Mode: %s | rate %.1f Mbps | buffer %u bytes\n", mode.c_str(), rate_bps / 1e6, limit_bytes);
+     if (use_overload) printf("Overload handling ON (p_Cmax = %.3f)\n", p_cmax);
+     if (use_qp) printf("Queue protection ON (max %u bytes per flow in L4S queue, sanction %.0f ms)\n",
+                        qp_max_flow_bytes, qp_sanction_ms);
++    if (use_police) printf("Sanctioned flows limited to %.1f Mbps\n", qp_police_bps / 1e6);
+ 
+     // ---------- open sockets ----------
+     RawSocket sock_in, sock_out;
+@@ -177,7 +183,7 @@ int main(int argc, char* argv[]) {
+     DualQueue queue(limit_bytes);
+     PI2AQM aqm(aqm_cfg);
+     DualQScheduler scheduler(sched_cfg);
+-    QueueProtection qp(qp_max_flow_bytes, qp_sanction_ms);
++    QueueProtection qp(qp_max_flow_bytes, qp_sanction_ms, use_police ? qp_police_bps : 0);
+     Stats st;
+ 
+     FILE* stats_file = fopen(stats_path.c_str(), "w");
+@@ -230,6 +236,11 @@ int main(int argc, char* argv[]) {
+                 to_l4s = false;
+                 sanctioned = true;
+                 st.qp_redirects++;
++                // Policing: a sanctioned flow over its rate limit is dropped right here
++                if (use_police && !qp.police(info.flow_id, n, Clock::now())) {
++                    st.qp_policed++;
++                    continue;
++                }
+             }
+ 
+             if (queue.enqueue(buf, n, info.ecn, to_l4s, info.flow_id, sanctioned)) {
+@@ -370,6 +381,7 @@ int main(int argc, char* argv[]) {
+     if (use_overload) printf("L4S overload drops %lu\n", (unsigned long)st.l4s_drops);
+     if (use_qp) {
+         printf("queue protection moved %lu packets to Classic\n", (unsigned long)st.qp_redirects);
++        if (use_police) printf("rate limit dropped %lu packets of sanctioned flows\n", (unsigned long)st.qp_policed);
+         qp.print_summary();
+     }
+     if (st.send_errors) printf("send errors: %lu\n", (unsigned long)st.send_errors);
+diff --git a/src/queue_protection.cpp b/src/queue_protection.cpp
+index b7194bc..52ddc99 100644
+--- a/src/queue_protection.cpp
++++ b/src/queue_protection.cpp
+@@ -3,8 +3,8 @@
+ #include <arpa/inet.h>
+ #include <cstdio>
+ 
+-QueueProtection::QueueProtection(uint32_t max_flow_bytes, double sanction_ms)
+-    : max_flow_bytes_(max_flow_bytes) {
++QueueProtection::QueueProtection(uint32_t max_flow_bytes, double sanction_ms, double police_rate_bps)
++    : max_flow_bytes_(max_flow_bytes), police_rate_bps_(police_rate_bps) {
+     sanction_time_ = std::chrono::duration_cast<Clock::duration>(
+         std::chrono::duration<double, std::milli>(sanction_ms));
+ }
+@@ -49,12 +49,37 @@ void QueueProtection::remove_bytes(uint64_t flow_id, int len) {
+     else flow.l4s_bytes = 0;
+ }
+ 
++bool QueueProtection::police(uint64_t flow_id, int len, Clock::time_point now) {
++    if (police_rate_bps_ <= 0) return true;  // policing switched off
++
++    FlowState& flow = flows_[flow_id];
++    const double bucket_size = 15000;        // bytes, allows a small burst (~10 packets)
++
++    // Refill the bucket for the time since the last packet
++    if (flow.last_refill.time_since_epoch().count() == 0) {
++        flow.tokens = bucket_size;           // first packet of this flow
++    } else {
++        double seconds = std::chrono::duration<double>(now - flow.last_refill).count();
++        flow.tokens += seconds * police_rate_bps_ / 8.0;
++        if (flow.tokens > bucket_size) flow.tokens = bucket_size;
++    }
++    flow.last_refill = now;
++
++    if (flow.tokens >= len) {
++        flow.tokens -= len;
++        return true;
++    }
++    flow.policed_pkts++;
++    return false;
++}
++
+ void QueueProtection::print_summary() const {
+     printf("queue protection: %zu L4S flows seen\n", flows_.size());
+     for (const auto& item : flows_) {
+         const FlowState& flow = item.second;
+         if (flow.times_sanctioned == 0) continue;
+-        printf("  sanctioned %u times, %lu packets moved to Classic: %s\n",
+-               flow.times_sanctioned, (unsigned long)flow.redirected_pkts, flow.name.c_str());
++        printf("  sanctioned %u times, %lu packets moved to Classic, %lu dropped by rate limit: %s\n",
++               flow.times_sanctioned, (unsigned long)flow.redirected_pkts,
++               (unsigned long)flow.policed_pkts, flow.name.c_str());
+     }
+ }

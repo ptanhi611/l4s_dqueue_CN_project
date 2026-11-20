@@ -10,6 +10,7 @@
 //   dualq_basic  DualQ + coupled PI2, without overload handling
 //   dualq        DualQ + coupled PI2 + RFC 9332 overload handling
 //   dualq_qp     dualq + our queue protection for the L4S queue
+//   dualq_qp_police  dualq_qp + rate limit for sanctioned flows
 
 #include <arpa/inet.h>
 #include <poll.h>
@@ -105,12 +106,13 @@ struct Stats {
     uint64_t big_frames = 0;   // frames > 1514 bytes, means offloads are still ON
     uint64_t l4s_drops = 0;    // L4S packets dropped because of overload
     uint64_t qp_redirects = 0; // L4S packets moved to Classic by queue protection
+    uint64_t qp_policed = 0;   // packets of sanctioned flows dropped by the rate limit
 };
 
 int main(int argc, char* argv[]) {
 
     if (argc < 2) {
-        printf("Usage: %s <config.ini> [fifo|dualq_basic|dualq|dualq_qp] [stats.csv]\n", argv[0]);
+        printf("Usage: %s <config.ini> [fifo|dualq_basic|dualq|dualq_qp|dualq_qp_police] [stats.csv]\n", argv[0]);
         return 1;
     }
 
@@ -119,13 +121,15 @@ int main(int argc, char* argv[]) {
     // ---------- read settings ----------
     std::string mode = get_str(cfg, "mode", "dualq");
     if (argc >= 3) mode = argv[2];  // command line overrides config
-    if (mode != "fifo" && mode != "dualq_basic" && mode != "dualq" && mode != "dualq_qp") {
-        printf("mode must be fifo, dualq_basic, dualq or dualq_qp\n");
+    if (mode != "fifo" && mode != "dualq_basic" && mode != "dualq" && mode != "dualq_qp"
+        && mode != "dualq_qp_police") {
+        printf("mode must be fifo, dualq_basic, dualq, dualq_qp or dualq_qp_police\n");
         return 1;
     }
     bool use_aqm = (mode != "fifo");
-    bool use_overload = (mode == "dualq" || mode == "dualq_qp");
-    bool use_qp = (mode == "dualq_qp");
+    bool use_qp = (mode == "dualq_qp" || mode == "dualq_qp_police");
+    bool use_police = (mode == "dualq_qp_police");
+    bool use_overload = (mode == "dualq" || use_qp);
 
     std::string in_if = get_str(cfg, "in_if", "r0-eth0");
     std::string out_if = get_str(cfg, "out_if", "r0-eth1");
@@ -163,11 +167,13 @@ int main(int argc, char* argv[]) {
 
     uint32_t qp_max_flow_bytes = (uint32_t)get_num(cfg, "qp_max_flow_bytes", 30000);
     double qp_sanction_ms = get_num(cfg, "qp_sanction_ms", 1000);
+    double qp_police_bps = get_num(cfg, "qp_police_rate_mbps", 5) * 1e6;
 
     printf("Mode: %s | rate %.1f Mbps | buffer %u bytes\n", mode.c_str(), rate_bps / 1e6, limit_bytes);
     if (use_overload) printf("Overload handling ON (p_Cmax = %.3f)\n", p_cmax);
     if (use_qp) printf("Queue protection ON (max %u bytes per flow in L4S queue, sanction %.0f ms)\n",
                        qp_max_flow_bytes, qp_sanction_ms);
+    if (use_police) printf("Sanctioned flows limited to %.1f Mbps\n", qp_police_bps / 1e6);
 
     // ---------- open sockets ----------
     RawSocket sock_in, sock_out;
@@ -177,7 +183,7 @@ int main(int argc, char* argv[]) {
     DualQueue queue(limit_bytes);
     PI2AQM aqm(aqm_cfg);
     DualQScheduler scheduler(sched_cfg);
-    QueueProtection qp(qp_max_flow_bytes, qp_sanction_ms);
+    QueueProtection qp(qp_max_flow_bytes, qp_sanction_ms, use_police ? qp_police_bps : 0);
     Stats st;
 
     FILE* stats_file = fopen(stats_path.c_str(), "w");
@@ -230,6 +236,11 @@ int main(int argc, char* argv[]) {
                 to_l4s = false;
                 sanctioned = true;
                 st.qp_redirects++;
+                // Policing: a sanctioned flow over its rate limit is dropped right here
+                if (use_police && !qp.police(info.flow_id, n, Clock::now())) {
+                    st.qp_policed++;
+                    continue;
+                }
             }
 
             if (queue.enqueue(buf, n, info.ecn, to_l4s, info.flow_id, sanctioned)) {
@@ -370,6 +381,7 @@ int main(int argc, char* argv[]) {
     if (use_overload) printf("L4S overload drops %lu\n", (unsigned long)st.l4s_drops);
     if (use_qp) {
         printf("queue protection moved %lu packets to Classic\n", (unsigned long)st.qp_redirects);
+        if (use_police) printf("rate limit dropped %lu packets of sanctioned flows\n", (unsigned long)st.qp_policed);
         qp.print_summary();
     }
     if (st.send_errors) printf("send errors: %lu\n", (unsigned long)st.send_errors);

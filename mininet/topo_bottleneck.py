@@ -8,7 +8,7 @@
 #
 # Interactive:  sudo python3 mininet/topo_bottleneck.py
 # Automatic:    sudo python3 mininet/topo_bottleneck.py --run dualq --scenario normal --duration 30
-#   modes:      fifo, dualq_basic, dualq, dualq_qp (our router) | fq_codel, dualpi2 (Linux kernel)
+#   modes:      fifo, dualq_basic, dualq, dualq_qp, dualq_qp_police (our router) | fq_codel, dualpi2 (kernel)
 #   scenarios:  normal = 1 Classic flow + 1 L4S flow + 2 latency probes
 #               attack = normal + an ECT(1) UDP flood (60 Mbps) that ignores marks,
 #                        from t=10 s until 10 s before the end
@@ -22,9 +22,12 @@ from mininet.cli import CLI
 from mininet.log import setLogLevel
 
 RATE_MBIT = 50  # must match rate_mbps in config/router_config.ini
-OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp']
+OUR_MODES = ['fifo', 'dualq_basic', 'dualq', 'dualq_qp', 'dualq_qp_police']
 KERNEL_MODES = ['fq_codel', 'dualpi2']
 ATTACK_START = 10    # seconds after the flows start
+# Router config file. Can be changed for one run with the ROUTER_CONFIG environment
+# variable, e.g. ROUTER_CONFIG=config/router_config_breaker_off.ini (used by eval/run_final.sh)
+ROUTER_CONFIG = os.environ.get('ROUTER_CONFIG', 'config/router_config.ini')
 FLOOD_RATE = '60M'   # more than the 50 Mbps link
 
 
@@ -115,8 +118,8 @@ def run_experiment(net, mode, scenario, duration):
     # 1. Start the forwarding path
     path_start = time.time()
     if mode in OUR_MODES:
-        r0.cmd('./build/l4s_router config/router_config.ini %s %s/router_stats.csv > %s/router_log.txt 2>&1 &'
-               % (mode, out, out))
+        r0.cmd('./build/l4s_router %s %s %s/router_stats.csv > %s/router_log.txt 2>&1 &'
+               % (ROUTER_CONFIG, mode, out, out))
     else:
         if not setup_kernel_baseline(r0, mode):
             return
@@ -141,7 +144,7 @@ def run_experiment(net, mode, scenario, duration):
 
     # Write down the settings of this run (used by the plots and kept for the report)
     with open(out + '/run_info.txt', 'w') as f:
-        f.write('mode=%s\nscenario=%s\nduration=%d\n' % (mode, scenario, duration))
+        f.write('mode=%s\nscenario=%s\nduration=%d\nconfig=%s\n' % (mode, scenario, duration, ROUTER_CONFIG))
         # seconds between router start and flow start (to line up router_stats.csv with the flows)
         f.write('flows_start=%.2f\n' % (time.time() - path_start))
         if scenario == 'attack':
@@ -162,7 +165,7 @@ def run_experiment(net, mode, scenario, duration):
     # so we can compare its L4S queue delay with our router's.
     if mode == 'dualpi2':
         r0.cmd('(while true; do tc -s qdisc show dev r0-eth1 | grep delay_c; sleep 0.1; done) > %s/tc_samples.txt 2>&1 &'
-               ' echo $! > %s/tc_loop.pid' % (out, out))
+               ' echo $! > /tmp/tc_loop.pid' % out)
 
     # 5. After 5 s, check that the L4S flow really uses DCTCP with ECN
     time.sleep(5)
@@ -181,7 +184,7 @@ def run_experiment(net, mode, scenario, duration):
     # 7. Stop everything
     r0.cmd('pkill -INT l4s_router')
     if mode == 'dualpi2':
-        r0.cmd('kill $(cat %s/tc_loop.pid) 2>/dev/null' % out)
+        r0.cmd('kill $(cat /tmp/tc_loop.pid) 2>/dev/null')
     h2.cmd('pkill iperf3')
     h2.cmd('pkill -f latency_probe.py')
     time.sleep(1)
